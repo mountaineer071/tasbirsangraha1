@@ -225,6 +225,7 @@ class DatabaseManager:
     
     def __init__(self, db_path: Path = Config.DB_FILE):
         self.db_path = db_path
+        self.DB_FILE = db_path 
         self._init_database()
     
     def _init_database(self):
