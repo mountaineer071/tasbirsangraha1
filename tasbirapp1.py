@@ -46,7 +46,7 @@ class Config:
     # Image settings
     THUMBNAIL_SIZE = (300, 300) # Good for grid
     PREVIEW_SIZE = (1200, 1200) # Larger for capable viewing
-    MAX_IMAGE_SIZE = 15 * 1024 * 1024  # Increased to 15MB
+    MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB Limit
     
     # Gallery settings
     ITEMS_PER_PAGE = 20
@@ -675,7 +675,10 @@ class ImageProcessor:
                 img = background
             
             buffered = io.BytesIO()
-            img.save(buffered, format="JPEG", quality=95)
+            # Use high quality for detail view
+            quality = 85 if max_size else 95 
+            img.save(buffered, format="JPEG", quality=quality, optimize=True)
+            
             encoded = base64.b64encode(buffered.getvalue()).decode()
             return f"data:image/jpeg;base64,{encoded}"
             
@@ -953,7 +956,7 @@ class AlbumManager:
                 'selected_person': None,
                 'selected_image': None,
                 'search_query': '',
-                'view_mode': 'grid',
+                'view_mode': 'grid',  # 'grid', 'list', 'detail'
                 'sort_by': 'date',
                 'sort_order': 'desc',
                 'selected_tags': [],
@@ -971,7 +974,10 @@ class AlbumManager:
             })
     
     def scan_directory(self, data_dir: Path = None) -> Dict:
-        """Scan directory for images and update database"""
+        """
+        Scan directory for images and update database.
+        FIXED: Now accepts folder names with or without hyphens.
+        """
         data_dir = data_dir or Config.DATA_DIR
         results = {
             'total_images': 0,
@@ -987,11 +993,16 @@ class AlbumManager:
             return results
         
         # Find all person directories
+        # FIXED: Removed strict requirement for '-' in folder name
         person_dirs = [d for d in data_dir.iterdir() 
-                      if d.is_dir() and not d.name.startswith('.') 
-                      and '-' in d.name]
+                      if d.is_dir() and not d.name.startswith('.')]
+        
         results['people_found'] = len(person_dirs)
         
+        if not person_dirs:
+            st.info("No folders found in the data directory. Please create a folder (e.g., 'My Family') and add images inside it.")
+            return results
+
         progress_bar = st.progress(0)
         total_files = 0
         processed_files = 0
@@ -1004,12 +1015,29 @@ class AlbumManager:
             ]
             total_files += len(image_files)
         
+        if total_files == 0:
+            st.warning("Found folders, but they contain no supported image files.")
+            return results
+
         for person_dir in person_dirs:
-            display_name = self._format_name(person_dir.name)
+            # FIXED: Use the folder name directly as display name if no hyphen exists
+            display_name = person_dir.name.replace('-', ' ').replace('_', ' ').title()
+            
+            # Check if person already exists to avoid changing UUIDs constantly (which breaks links)
+            # This logic ensures we keep the same person_id if they exist
+            with sqlite3.connect(self.db.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT person_id FROM people WHERE folder_name = ?', (person_dir.name,))
+                existing_person = cursor.fetchone()
+            
+            if existing_person:
+                person_id = existing_person[0]
+            else:
+                person_id = str(uuid.uuid4())
             
             # Create or update person profile
             person_profile = PersonProfile(
-                person_id=str(uuid.uuid4()),
+                person_id=person_id, # Use the ID found or generated
                 folder_name=person_dir.name,
                 display_name=display_name,
                 bio=f"Photos of {display_name}",
@@ -1048,6 +1076,31 @@ class AlbumManager:
                     
                     if existing:
                         results['updated_images'] += 1
+                        # Check if an album entry exists for this person/image combo
+                        # If not, create one (in case of moving images)
+                        with sqlite3.connect(self.db.db_path) as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                'SELECT entry_id FROM album_entries WHERE image_id = ? AND person_id = ?',
+                                (existing[0], person_id)
+                            )
+                            if not cursor.fetchone():
+                                # Re-link existing image to this person
+                                album_entry = AlbumEntry(
+                                    entry_id=str(uuid.uuid4()),
+                                    image_id=existing[0],
+                                    person_id=person_id,
+                                    caption=img_path.stem.replace('_', ' ').title(),
+                                    description=f"Photo of {display_name}",
+                                    location="",
+                                    date_taken=ImageMetadata.from_image(img_path).created_date,
+                                    tags=[display_name.lower().replace(' ', '-'), 'photo', 'memory'],
+                                    privacy_level='public',
+                                    created_by='system',
+                                    created_at=datetime.datetime.now(),
+                                    updated_at=datetime.datetime.now()
+                                )
+                                self.db.add_album_entry(album_entry)
                         continue
                     
                     # Create thumbnail
@@ -1068,7 +1121,7 @@ class AlbumManager:
                     album_entry = AlbumEntry(
                         entry_id=str(uuid.uuid4()),
                         image_id=metadata.image_id,
-                        person_id=person_profile.person_id,
+                        person_id=person_id,
                         caption=img_path.stem.replace('_', ' ').title(),
                         description=f"Photo of {display_name}",
                         location="",
@@ -1087,7 +1140,8 @@ class AlbumManager:
                 except Exception as e:
                     error_msg = f"Error processing {img_path}: {str(e)}"
                     results['errors'].append(error_msg)
-                    st.error(error_msg)
+                    # Only print to console to avoid spamming UI, but log to results
+                    print(error_msg)
         
         progress_bar.empty()
         
