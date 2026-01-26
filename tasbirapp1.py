@@ -1,6 +1,6 @@
 """
 COMPREHENSIVE WEB PHOTO ALBUM APPLICATION
-Version: 2.1.0 - Fully Functional
+Version: 2.2.0 - Fully Functional
 Features: Table of Contents, Image Gallery, Comments, Ratings, Metadata Management, Search, and More
 """
 import streamlit as st
@@ -26,7 +26,7 @@ import string
 from collections import defaultdict
 import re
 import os
-from contextlib import contextmanager  # Critical missing import
+from contextlib import contextmanager
 
 # ============================================================================
 # CONFIGURATION AND CONSTANTS
@@ -34,7 +34,7 @@ from contextlib import contextmanager  # Critical missing import
 class Config:
     """Application configuration constants"""
     APP_NAME = "MemoryVault Pro"
-    VERSION = "2.1.0"
+    VERSION = "2.2.0"
     
     # Get absolute paths
     BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -645,7 +645,10 @@ class ImageProcessor:
                 # Convert to RGB if necessary (for GIF, PNG with transparency)
                 if img.mode in ('RGBA', 'LA', 'P'):
                     background = Image.new('RGB', img.size, (255, 255, 255))
-                    background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                    if img.mode in ('RGBA', 'LA'):
+                        background.paste(img, mask=img.split()[-1])
+                    else:
+                        background.paste(img)
                     img = background
                 
                 # Create thumbnail
@@ -667,7 +670,7 @@ class ImageProcessor:
                 return ""
                 
             with open(image_path, "rb") as img_file:
-                encoded = base64.b64encode(img_file.read()).decode()
+                encoded = base64.b64encode(img_file.read()).decode('utf-8')
                 mime_type = "image/jpeg" if image_path.suffix.lower() in ['.jpg', '.jpeg'] else f"image/{image_path.suffix[1:]}"
                 return f"data:{mime_type};base64,{encoded}"
         except Exception as e:
@@ -823,94 +826,6 @@ class UIComponents:
             '''
         
         return html
-    
-    @staticmethod
-    def image_card(image_url: str, caption: str, tags: List[str],
-                  rating: float, comments_count: int,
-                  entry_id: str, metadata: Dict = None) -> str:
-        """Generate HTML for image card"""
-        tags_html = UIComponents.tag_badges(tags[:3])
-        stars_html = UIComponents.rating_stars(rating)
-        
-        # Format date if available
-        date_str = ""
-        if metadata and 'date_taken' in metadata and metadata['date_taken']:
-            date_str = f"""
-            <div style="
-                color: #666;
-                font-size: 12px;
-                margin-top: 4px;
-            ">
-            📅  {metadata['date_taken'].strftime('%Y-%m-%d') if hasattr(metadata['date_taken'], 'strftime') else metadata['date_taken']}
-            </div>
-            """
-        
-        # Fallback image if URL is empty
-        if not image_url:
-            image_url = "https://via.placeholder.com/300x300/667eea/ffffff?text=No+Image"
-        
-        return f'''
-        <div style="
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
-            cursor: pointer;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        ">
-            <div style="
-                aspect-ratio: 1/1;
-                overflow: hidden;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            ">
-                <img src="{image_url}"
-                style="
-                    width: 100%;
-                    height: 100%;
-                    object-fit: cover;
-                    transition: transform 0.5s ease;
-                "
-                onmouseover="this.style.transform='scale(1.05)'"
-                onmouseout="this.style.transform='scale(1)'"
-                alt="{caption}"
-                >
-            </div>
-            <div style="padding: 16px; flex-grow: 1; display: flex; flex-direction: column;">
-                <div style="
-                    font-weight: 600;
-                    font-size: 16px;
-                    margin-bottom: 8px;
-                    color: #333;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                ">
-                {caption}
-                </div>
-                {date_str}
-                <div style="margin: 8px 0; flex-grow: 1;">
-                {stars_html}
-                </div>
-                <div style="margin: 8px 0; min-height: 40px;">
-                {tags_html}
-                </div>
-                <div style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-top: 12px;
-                    color: #666;
-                    font-size: 14px;
-                ">
-                    <span>💬 {comments_count}</span>
-                    <span>👁️ {metadata.get('view_count', 0) if metadata else 0}</span>
-                </div>
-            </div>
-        </div>
-        '''
 
 # ============================================================================
 # ALBUM MANAGER
@@ -947,7 +862,8 @@ class AlbumManager:
                 'analytics_cache': {},
                 'toc_page': 1,
                 'gallery_page': 1,
-                'recent_searches': []
+                'recent_searches': [],
+                'show_setup_instructions': True
             })
     
     def scan_directory(self, data_dir: Path = None) -> Dict:
@@ -961,6 +877,9 @@ class AlbumManager:
             'errors': []
         }
         
+        # Clear the cache before scanning
+        self.cache.clear()
+        
         if not data_dir.exists():
             data_dir.mkdir(parents=True)
             st.warning(f"Created directory: {data_dir}")
@@ -969,7 +888,15 @@ class AlbumManager:
         # Find all person directories
         person_dirs = [d for d in data_dir.iterdir() 
                       if d.is_dir() and not d.name.startswith('.') 
-                      and '-' in d.name]
+                      and d.name != 'thumbnails']
+        
+        if not person_dirs:
+            st.info("No person folders found. Creating sample structure...")
+            self.create_sample_structure()
+            person_dirs = [d for d in data_dir.iterdir() 
+                          if d.is_dir() and not d.name.startswith('.') 
+                          and d.name != 'thumbnails']
+        
         results['people_found'] = len(person_dirs)
         
         progress_bar = st.progress(0)
@@ -984,23 +911,38 @@ class AlbumManager:
             ]
             total_files += len(image_files)
         
+        if total_files == 0:
+            progress_bar.empty()
+            st.warning("No images found in any folders. Please add some images to your person folders.")
+            return results
+        
         for person_dir in person_dirs:
             display_name = self._format_name(person_dir.name)
             
             # Create or update person profile
-            person_profile = PersonProfile(
-                person_id=str(uuid.uuid4()),
-                folder_name=person_dir.name,
-                display_name=display_name,
-                bio=f"Photos of {display_name}",
-                birth_date=None,
-                relationship="Family/Friend",
-                contact_info="",
-                social_links={},
-                profile_image=None,
-                created_at=datetime.datetime.now()
-            )
-            self.db.add_person(person_profile)
+            existing_person = None
+            for p in self.db.get_all_people():
+                if p['folder_name'] == person_dir.name:
+                    existing_person = p
+                    break
+            
+            if not existing_person:
+                person_profile = PersonProfile(
+                    person_id=str(uuid.uuid4()),
+                    folder_name=person_dir.name,
+                    display_name=display_name,
+                    bio=f"Photos of {display_name}",
+                    birth_date=None,
+                    relationship="Family/Friend",
+                    contact_info="",
+                    social_links={},
+                    profile_image=None,
+                    created_at=datetime.datetime.now()
+                )
+                self.db.add_person(person_profile)
+                person_id = person_profile.person_id
+            else:
+                person_id = existing_person['person_id']
             
             # Process images in directory
             image_files = [
@@ -1048,7 +990,7 @@ class AlbumManager:
                     album_entry = AlbumEntry(
                         entry_id=str(uuid.uuid4()),
                         image_id=metadata.image_id,
-                        person_id=person_profile.person_id,
+                        person_id=person_id,
                         caption=img_path.stem.replace('_', ' ').title(),
                         description=f"Photo of {display_name}",
                         location="",
@@ -1131,6 +1073,32 @@ class AlbumManager:
                 }
         
         return self.cache.get_or_set(cache_key, generate_stats)
+    
+    def create_sample_structure(self):
+        """Create sample directory structure with example photos"""
+        sample_people = ["john-smith", "sarah-johnson", "michael-brown"]
+        
+        for person in sample_people:
+            person_dir = Config.DATA_DIR / person
+            person_dir.mkdir(exist_ok=True)
+            
+            # Create a sample README file
+            readme_file = person_dir / "README.txt"
+            readme_file.write_text(f"Photos of {person.replace('-', ' ').title()}\nAdd your photos here!")
+            
+            # Add a sample image (placeholder)
+            sample_image_path = person_dir / "sample.jpg"
+            if not sample_image_path.exists():
+                try:
+                    # Create a simple colored image as placeholder
+                    from PIL import Image, ImageDraw
+                    
+                    img = Image.new('RGB', (300, 300), color=f'#{random.randint(100000, 999999)}')
+                    draw = ImageDraw.Draw(img)
+                    draw.text((100, 140), person.replace('-', ' ').title(), fill=(255, 255, 255))
+                    img.save(sample_image_path)
+                except Exception as e:
+                    st.warning(f"Could not create sample image: {str(e)}")
     
     def get_all_tags(self) -> List[str]:
         """Get all unique tags from database"""
@@ -1323,7 +1291,7 @@ class PhotoAlbumApp:
         """Configure Streamlit page settings"""
         st.set_page_config(
             page_title=f"{Config.APP_NAME} v{Config.VERSION}",
-            page_icon="👨‍👩‍👧‍👦",
+            page_icon="🖼️",
             layout="wide",
             initial_sidebar_state="expanded",
             menu_items={
@@ -1601,11 +1569,38 @@ class PhotoAlbumApp:
         </style>
         """, unsafe_allow_html=True)
     
+    def render_directory_structure_info(self):
+        """Show instructions about the required directory structure"""
+        st.markdown("""
+        <div style="background: #e3f2fd; border-radius: 10px; padding: 20px; margin: 20px 0;">
+            <h3>📁 Required Directory Structure</h3>
+            <p>Your photos must be organized with this structure:</p>
+            <pre style="background: white; padding: 15px; border-radius: 8px; font-family: monospace;">
+            data/
+            ├── john-doe/          # Person folder (must contain hyphen)
+            │   ├── vacation.jpg
+            │   ├── birthday.png
+            │   └── ...
+            ├── jane-smith/        # Another person folder
+            │   ├── family.jpg
+            │   └── ...
+            └── ...
+            </pre>
+            <p><strong>Important Requirements:</strong></p>
+            <ul>
+                <li>Each person must have their own folder</li>
+                <li>Folder names must contain hyphens (e.g., "john-doe" not "johndoe")</li>
+                <li>Supported image formats: JPG, JPEG, PNG, GIF, BMP, WEBP, TIFF</li>
+            </ul>
+            <p>After organizing your photos, click the <strong>"📸 Scan for New Photos"</strong> button in the sidebar to load them into the album.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     def render_header(self):
         """Render main application header"""
         st.markdown(f"""
         <div class="main-header">
-            <h1>👨‍👩‍👧‍👦 {Config.APP_NAME}</h1>
+            <h1>🖼️ {Config.APP_NAME}</h1>
             <p>Your personal photo gallery with advanced features</p>
             <div style="
                 display: flex;
@@ -1712,10 +1707,12 @@ class PhotoAlbumApp:
                         success_message += f"\n- and {len(results['errors'])-3} more..."
                 
                 st.success(success_message)
+                st.rerun()
             
             if st.button("🗂️ Clear Cache", use_container_width=True, key="clear_cache_button"):
                 self.album_manager.cache.clear()
                 st.success("Cache cleared!")
+                st.rerun()
             
             # Export options
             st.markdown("---")
@@ -1737,6 +1734,14 @@ class PhotoAlbumApp:
                         )
                     except Exception as e:
                         st.error(f"Error during export: {str(e)}")
+            
+            # Setup instructions toggle
+            st.markdown("---")
+            if st.button("ℹ️ Show Setup Instructions", use_container_width=True):
+                st.session_state.show_setup_instructions = True
+            
+            if st.button("✅ I Understand - Hide Instructions", use_container_width=True):
+                st.session_state.show_setup_instructions = False
     
     def render_table_of_contents(self):
         """Render interactive table of contents"""
@@ -1763,6 +1768,14 @@ class PhotoAlbumApp:
         
         # Get all people
         all_people = self.album_manager.db.get_all_people()
+        
+        # If no people found, show instructions
+        if not all_people:
+            st.info("No people found in the database. Click the '📸 Scan for New Photos' button in the sidebar to scan your photo directory.")
+            if st.session_state.show_setup_instructions:
+                self.render_directory_structure_info()
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
         
         # Filter based on search
         if search_query:
@@ -1941,6 +1954,12 @@ class PhotoAlbumApp:
             cursor.execute(query, params)
             entries = [dict(row) for row in cursor.fetchall()]
         
+        # If no entries found
+        if not entries:
+            st.info(f"No photos found for {person_info['display_name']}.")
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        
         # Pagination
         total_pages = max(1, (len(entries) + items_per_page - 1) // items_per_page)
         page_number = st.session_state.get('gallery_page', 1)
@@ -1973,20 +1992,25 @@ class PhotoAlbumApp:
     
     def _render_grid_view(self, entries: List[Dict], person_info: Dict):
         """Render images in grid view"""
+        if not entries:
+            st.info("No photos available.")
+            return
+            
         cols = st.columns(4)
         for idx, entry in enumerate(entries):
             with cols[idx % 4]:
                 # Get thumbnail path or create data URL
-                thumbnail_path = entry.get('thumbnail_path')
                 img_url = ""
+                thumbnail_path = entry.get('thumbnail_path')
+                img_path = Config.DATA_DIR / entry['filepath']
                 
                 if thumbnail_path and Path(thumbnail_path).exists():
                     img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
-                else:
-                    # Fallback to actual image
-                    img_path = Config.DATA_DIR / entry['filepath']
-                    if img_path.exists():
-                        img_url = self.album_manager.image_processor.get_image_data_url(img_path)
+                elif img_path.exists():
+                    # Create thumbnail if it doesn't exist
+                    thumbnail_path = self.album_manager.image_processor.create_thumbnail(img_path)
+                    if thumbnail_path:
+                        img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
                 
                 # Get rating and comment count
                 avg_rating, rating_count = self.album_manager.db.get_entry_ratings(entry['entry_id'])
@@ -1999,12 +2023,13 @@ class PhotoAlbumApp:
                     )
                     comment_count = cursor.fetchone()[0] or 0
                 
-                # Parse tags
-                tags = entry.get('tags', '').split(',') if entry.get('tags') else []
-                
-                # Display image card
+                # Display image
                 if img_url:
                     st.image(img_url, use_container_width=True, caption=entry.get('caption', 'Untitled'))
+                else:
+                    st.image("https://via.placeholder.com/300x300/667eea/ffffff?text=No+Image", 
+                            use_container_width=True, 
+                            caption=entry.get('caption', 'Untitled'))
                 
                 # Card content
                 st.markdown(f"""
@@ -2038,25 +2063,31 @@ class PhotoAlbumApp:
     
     def _render_list_view(self, entries: List[Dict], person_info: Dict):
         """Render images in list view"""
+        if not entries:
+            st.info("No photos available.")
+            return
+            
         for entry in entries:
             with st.container():
                 col_img, col_info = st.columns([1, 2])
                 
                 with col_img:
                     # Display thumbnail
-                    thumbnail_path = entry.get('thumbnail_path')
                     img_url = ""
+                    thumbnail_path = entry.get('thumbnail_path')
+                    img_path = Config.DATA_DIR / entry['filepath']
                     
                     if thumbnail_path and Path(thumbnail_path).exists():
                         img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
-                    else:
-                        img_path = Config.DATA_DIR / entry['filepath']
-                        img_url = self.album_manager.image_processor.get_image_data_url(img_path) if img_path.exists() else ""
+                    elif img_path.exists():
+                        thumbnail_path = self.album_manager.image_processor.create_thumbnail(img_path)
+                        if thumbnail_path:
+                            img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
                     
                     if img_url:
                         st.image(img_url, use_container_width=True)
                     else:
-                        st.markdown("No image available")
+                        st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", use_container_width=True)
                 
                 with col_info:
                     # Entry details
@@ -2069,6 +2100,8 @@ class PhotoAlbumApp:
                             (entry['entry_id'],)
                         )
                         comment_count = cursor.fetchone()[0] or 0
+                    
+                    tags = entry.get('tags', '').split(',') if entry.get('tags') else []
                     
                     st.markdown(f"""
                     <div style="margin-bottom: 1rem;">
@@ -2084,7 +2117,7 @@ class PhotoAlbumApp:
                             <span>⭐ {rating_count} ratings</span>
                         </div>
                         <div style="margin-top: 10px;">
-                            {UIComponents.tag_badges(entry.get('tags', '').split(',') if entry.get('tags') else [])}
+                            {UIComponents.tag_badges(tags)}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -2139,18 +2172,17 @@ class PhotoAlbumApp:
             # Display image
             img_path = Config.DATA_DIR / entry_details['filepath']
             if img_path.exists():
-                # Create columns for navigation if there are multiple images
-                col_prev, col_img, col_next = st.columns([1, 4, 1])
-                
-                with col_img:
-                    try:
-                        with Image.open(img_path) as img:
-                            # Resize for display while maintaining aspect ratio
-                            img.thumbnail(Config.PREVIEW_SIZE)
-                            st.image(img, use_container_width=True, caption=entry_details.get('caption', ''))
-                    except Exception as e:
-                        st.error(f"Error loading image: {str(e)}")
-                        st.image("https://via.placeholder.com/800x600/667eea/ffffff?text=Image+Error")
+                try:
+                    with Image.open(img_path) as img:
+                        # Resize for display while maintaining aspect ratio
+                        img.thumbnail(Config.PREVIEW_SIZE)
+                        st.image(img, use_container_width=True, caption=entry_details.get('caption', ''))
+                except Exception as e:
+                    st.error(f"Error loading image: {str(e)}")
+                    st.image("https://via.placeholder.com/800x600/667eea/ffffff?text=Image+Error", use_container_width=True)
+            else:
+                st.error(f"Image file not found at: {img_path}")
+                st.image("https://via.placeholder.com/800x600/667eea/ffffff?text=File+Not+Found", use_container_width=True)
             
             # Image info
             st.markdown(f"""
@@ -2335,10 +2367,19 @@ class PhotoAlbumApp:
                             # Try to display thumbnail
                             img_path = Config.DATA_DIR / result.get('filepath', '')
                             if img_path.exists():
-                                st.image(
-                                    self.album_manager.image_processor.get_image_data_url(img_path),
-                                    width=150
-                                )
+                                thumbnail_path = Path(result.get('thumbnail_path', ''))
+                                if thumbnail_path.exists():
+                                    st.image(
+                                        self.album_manager.image_processor.get_image_data_url(thumbnail_path),
+                                        width=150
+                                    )
+                                else:
+                                    st.image(
+                                        self.album_manager.image_processor.get_image_data_url(img_path),
+                                        width=150
+                                    )
+                            else:
+                                st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", width=150)
                         with col_info:
                             st.write(f"**Caption:** {result['caption']}")
                             st.write(f"**Description:** {result.get('description', 'No description')}")
@@ -2405,6 +2446,14 @@ class PhotoAlbumApp:
         with col4:
             st.metric("⭐ Avg Rating", f"{avg_rating:.1f}")
         
+        # Show instructions if no photos
+        if total_photos == 0:
+            st.info("No photos found in your album. Click the '📸 Scan for New Photos' button in the sidebar to import your photos.")
+            if st.session_state.show_setup_instructions:
+                self.render_directory_structure_info()
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        
         # Charts and visualizations
         st.markdown("---")
         col1, col2 = st.columns(2)
@@ -2465,10 +2514,20 @@ class PhotoAlbumApp:
             cols = st.columns(3)
             for idx, photo in enumerate(recent_photos):
                 with cols[idx % 3]:
-                    thumbnail_path = photo.get('thumbnail_path')
-                    if thumbnail_path and Path(thumbnail_path).exists():
-                        img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
+                    thumbnail_path = Path(photo.get('thumbnail_path', ''))
+                    img_url = ""
+                    
+                    if thumbnail_path.exists():
+                        img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
+                    else:
+                        img_path = Config.DATA_DIR / photo['filepath']
+                        if img_path.exists():
+                            img_url = self.album_manager.image_processor.get_image_data_url(img_path)
+                    
+                    if img_url:
                         st.image(img_url, use_container_width=True)
+                    else:
+                        st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", use_container_width=True)
                     
                     st.caption(f"**{photo['caption']}**")
                     st.caption(f"By: {photo['display_name']}")
@@ -2504,11 +2563,11 @@ class PhotoAlbumApp:
             cols = st.columns(3)
             for idx, entry in enumerate(favorites):
                 with cols[idx % 3]:
-                    thumbnail_path = entry.get('thumbnail_path')
+                    thumbnail_path = Path(entry.get('thumbnail_path', ''))
                     img_url = ""
                     
-                    if thumbnail_path and Path(thumbnail_path).exists():
-                        img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
+                    if thumbnail_path.exists():
+                        img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
                     else:
                         img_path = Config.DATA_DIR / entry['filepath']
                         if img_path.exists():
@@ -2516,6 +2575,8 @@ class PhotoAlbumApp:
                     
                     if img_url:
                         st.image(img_url, use_container_width=True)
+                    else:
+                        st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", use_container_width=True)
                     
                     st.caption(entry.get('caption', 'Untitled'))
                     col_btn1, col_btn2 = st.columns(2)
@@ -2663,21 +2724,6 @@ def initialize_application():
     
     return True
 
-def create_sample_data():
-    """Create sample data for demonstration purposes"""
-    # Create sample person directories
-    sample_people = ["john-smith", "sarah-johnson", "michael-brown"]
-    
-    for person in sample_people:
-        person_dir = Config.DATA_DIR / person
-        person_dir.mkdir(exist_ok=True)
-        
-        # Create a sample README file
-        readme_file = person_dir / "README.txt"
-        readme_file.write_text(f"Photos of {person.replace('-', ' ').title()}\nAdd your photos here!")
-    
-    st.success(f"Created sample data structure with {len(sample_people)} person folders")
-
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
@@ -2685,20 +2731,13 @@ if __name__ == "__main__":
     # Set up Streamlit page
     st.set_page_config(
         page_title="MemoryVault Pro",
-        page_icon="👨‍👩‍👧‍👦",
+        page_icon="🖼️",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
     # Initialize application
     Config.init_directories()
-    
-    # Check if we need to create sample data
-    if not any(Config.DATA_DIR.iterdir()):
-        st.info("No data found. Let's set up your album!")
-        if st.button("Create Sample Data Structure"):
-            create_sample_data()
-            st.rerun()
     
     # Create and run the application
     app = PhotoAlbumApp()
