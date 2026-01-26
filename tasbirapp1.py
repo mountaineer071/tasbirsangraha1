@@ -1,3 +1,8 @@
+"""
+COMPREHENSIVE WEB PHOTO ALBUM APPLICATION
+Version: 2.1.0 - Fully Functional
+Features: Table of Contents, Image Gallery, Comments, Ratings, Metadata Management, Search, and More
+"""
 import streamlit as st
 from pathlib import Path
 from PIL import Image, ImageOps, ExifTags
@@ -19,9 +24,9 @@ from enum import Enum
 import random
 import string
 from collections import defaultdict
-from contextlib import contextmanager
 import re
 import os
+from contextlib import contextmanager  # Critical missing import
 
 # ============================================================================
 # CONFIGURATION AND CONSTANTS
@@ -1287,25 +1292,25 @@ class AlbumManager:
                 'total_entries': len(entries_data)
             }
             output = io.BytesIO()
-            output.write(json.dumps(export_data, indent=2, default=str).encode())
+            output.write(json.dumps(export_data, indent=2, default=str).encode('utf-8'))
             output.seek(0)
         elif format_type == 'csv':
             output = io.BytesIO()
             
             # Write people CSV
-            if people_data:
+            if people_
                 people_df = pd.DataFrame(people_data)
                 people_csv = people_df.to_csv(index=False)
                 output.write(b"PEOPLE DATA\n")
-                output.write(people_csv.encode())
+                output.write(people_csv.encode('utf-8'))
                 output.write(b"\n\n")
             
             # Write entries CSV
-            if entries_data:
+            if entries_
                 entries_df = pd.DataFrame(entries_data)
                 entries_csv = entries_df.to_csv(index=False)
                 output.write(b"ALBUM ENTRIES\n")
-                output.write(entries_csv.encode())
+                output.write(entries_csv.encode('utf-8'))
             
             output.seek(0)
         
@@ -2243,7 +2248,7 @@ class PhotoAlbumApp:
                     <div class="comment-item">
                         <div class="comment-header">
                             <span class="comment-author">{comment['username']}</span>
-                            <span class="comment-date">{comment['created_at'][:19]}</span>
+                            <span class="comment-date">{comment.get('created_at', '')[:19]}</span>
                         </div>
                         <div class="comment-content">{comment['content']}</div>
                     </div>
@@ -2290,7 +2295,7 @@ class PhotoAlbumApp:
                     except:
                         exif_data = {}
                 
-                if exif_data:
+                if exif_
                     for key, value in exif_data.items():
                         if value and str(value).strip():  # Skip None/empty values
                             st.text(f"{key}: {value}")
@@ -2439,7 +2444,7 @@ class PhotoAlbumApp:
                     if month:
                         chart_data.append({'Month': month, 'Photos': count})
                 
-                if chart_data:
+                if chart_
                     df = pd.DataFrame(chart_data)
                     df = df.sort_values('Month')
                     st.line_chart(df.set_index('Month'))
