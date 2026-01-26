@@ -1298,7 +1298,7 @@ class AlbumManager:
             output = io.BytesIO()
             
             # Write people CSV
-            if people_
+            if people_data:
                 people_df = pd.DataFrame(people_data)
                 people_csv = people_df.to_csv(index=False)
                 output.write(b"PEOPLE DATA\n")
@@ -1306,7 +1306,7 @@ class AlbumManager:
                 output.write(b"\n\n")
             
             # Write entries CSV
-            if entries_
+            if entries_data:
                 entries_df = pd.DataFrame(entries_data)
                 entries_csv = entries_df.to_csv(index=False)
                 output.write(b"ALBUM ENTRIES\n")
