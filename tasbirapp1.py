@@ -86,14 +86,6 @@ class UserRoles(Enum):
     EDITOR = "editor"
     ADMIN = "admin"
 
-class RatingScale(Enum):
-    """Rating system"""
-    ONE = 1
-    TWO = 2
-    THREE = 3
-    FOUR = 4
-    FIVE = 5
-
 # ============================================================================
 # DATA MODELS
 # ============================================================================
@@ -2295,7 +2287,7 @@ class PhotoAlbumApp:
                     except:
                         exif_data = {}
                 
-                if exif_
+                if exif_data:
                     for key, value in exif_data.items():
                         if value and str(value).strip():  # Skip None/empty values
                             st.text(f"{key}: {value}")
@@ -2444,7 +2436,7 @@ class PhotoAlbumApp:
                     if month:
                         chart_data.append({'Month': month, 'Photos': count})
                 
-                if chart_
+                if chart_data:
                     df = pd.DataFrame(chart_data)
                     df = df.sort_values('Month')
                     st.line_chart(df.set_index('Month'))
