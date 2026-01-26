@@ -1,3 +1,8 @@
+"""
+COMPREHENSIVE WEB PHOTO ALBUM APPLICATION
+Version: 2.1.0 - Fully Functional
+Features: Table of Contents, Image Gallery, Comments, Ratings, Metadata Management, Search, and More
+"""
 import streamlit as st
 from pathlib import Path
 from PIL import Image, ImageOps, ExifTags
@@ -22,14 +27,13 @@ from collections import defaultdict
 import re
 import os
 from contextlib import contextmanager
-
 # ============================================================================
 # CONFIGURATION AND CONSTANTS
 # ============================================================================
 class Config:
     """Application configuration constants"""
     APP_NAME = "MemoryVault Pro"
-    VERSION = "2.2.0"  # Upgraded Version
+    VERSION = "2.1.0"
     
     # Get absolute paths
     BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -44,9 +48,9 @@ class Config:
     DB_FILE = DB_DIR / "album.db"
     
     # Image settings
-    THUMBNAIL_SIZE = (300, 300) # Good for grid
-    PREVIEW_SIZE = (1200, 1200) # Larger for capable viewing
-    MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB Limit
+    THUMBNAIL_SIZE = (300, 300)
+    PREVIEW_SIZE = (800, 800)
+    MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
     
     # Gallery settings
     ITEMS_PER_PAGE = 20
@@ -382,7 +386,7 @@ class DatabaseManager:
             
             conn.commit()
     
-    def add_image(self, metadata: ImageMetadata, thumbnail_path: str = None):
+    def add_image(self, metadata, thumbnail_path: str = None):
         """Add image metadata to database"""
         if not isinstance(metadata, ImageMetadata):
             raise TypeError("metadata must be an ImageMetadata instance")
@@ -605,7 +609,7 @@ class DatabaseManager:
                         result['exif_data'] = json.loads(result['exif_data'])
                     except Exception as e:
                         result['exif_data'] = {}
-                        st.warning(f"Error parsing exif_data: {str(e)}")
+                        st.warning(f"Error parsing exif_ {str(e)}")
                 # Parse tags
                 if result.get('tags'):
                     result['tags'] = result['tags'].split(',')
@@ -640,14 +644,17 @@ class ImageProcessor:
                 # Convert to RGB if necessary (for GIF, PNG with transparency)
                 if img.mode in ('RGBA', 'LA', 'P'):
                     background = Image.new('RGB', img.size, (255, 255, 255))
-                    background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                    if img.mode in ('RGBA', 'LA'):
+                        background.paste(img, mask=img.split()[-1])
+                    else:
+                        background.paste(img)
                     img = background
                 
-                # Create thumbnail with high-quality resampling
+                # Create thumbnail
                 img.thumbnail(Config.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
                 
                 # Save thumbnail as JPG for consistency
-                img.save(thumbnail_path, 'JPEG', quality=90, optimize=True)
+                img.save(thumbnail_path, 'JPEG', quality=85, optimize=True)
                 
             return thumbnail_path
         except Exception as e:
@@ -655,33 +662,16 @@ class ImageProcessor:
             return None
     
     @staticmethod
-    def get_image_data_url(image_path: Path, max_size: Tuple[int, int] = None) -> str:
-        """Convert image to data URL for embedding with optional resizing"""
+    def get_image_data_url(image_path: Path) -> str:
+        """Convert image to data URL for embedding"""
         try:
             if not image_path.exists():
                 return ""
                 
-            # Optionally resize before encoding for performance
-            img = Image.open(image_path)
-            img = ImageOps.exif_transpose(img)
-            
-            if max_size:
-                img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            
-            # Handle format conversion for embedding
-            if img.mode in ('RGBA', 'LA', 'P'):
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
-                img = background
-            
-            buffered = io.BytesIO()
-            # Use high quality for detail view
-            quality = 85 if max_size else 95 
-            img.save(buffered, format="JPEG", quality=quality, optimize=True)
-            
-            encoded = base64.b64encode(buffered.getvalue()).decode()
-            return f"data:image/jpeg;base64,{encoded}"
-            
+            with open(image_path, "rb") as img_file:
+                encoded = base64.b64encode(img_file.read()).decode('utf-8')
+                mime_type = "image/jpeg" if image_path.suffix.lower() in ['.jpg', '.jpeg'] else f"image/{image_path.suffix[1:]}"
+                return f"data:{mime_type};base64,{encoded}"
         except Exception as e:
             st.error(f"Error encoding image {image_path}: {str(e)}")
             return ""
@@ -835,105 +825,6 @@ class UIComponents:
             '''
         
         return html
-    
-    @staticmethod
-    def image_card(image_url: str, caption: str, tags: List[str],
-                  rating: float, comments_count: int,
-                  entry_id: str, metadata: Dict = None) -> str:
-        """Generate HTML for image card with enhanced styling"""
-        tags_html = UIComponents.tag_badges(tags[:3])
-        stars_html = UIComponents.rating_stars(rating)
-        
-        # Format date if available
-        date_str = ""
-        if metadata and 'date_taken' in metadata and metadata['date_taken']:
-            date_obj = metadata['date_taken']
-            if isinstance(date_obj, str):
-                try:
-                    date_obj = datetime.datetime.fromisoformat(date_obj)
-                except:
-                    date_obj = None
-            if date_obj:
-                date_str = f"""
-                <div style="
-                    color: #666;
-                    font-size: 12px;
-                    margin-top: 4px;
-                ">
-                📅  {date_obj.strftime('%Y-%m-%d')}
-                </div>
-                """
-        
-        # Fallback image if URL is empty
-        if not image_url:
-            image_url = "https://via.placeholder.com/300x300/667eea/ffffff?text=No+Image"
-        
-        return f'''
-        <div style="
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            transition: all 0.3s ease;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            border: 1px solid #f0f0f0;
-        ">
-            <div style="
-                aspect-ratio: 1/1;
-                overflow: hidden;
-                background: #f8f9fa;
-                position: relative;
-            ">
-                <img src="{image_url}"
-                style="
-                    width: 100%;
-                    height: 100%;
-                    object-fit: cover;
-                    transition: transform 0.5s ease;
-                "
-                onmouseover="this.style.transform='scale(1.05)'"
-                onmouseout="this.style.transform='scale(1)'"
-                alt="{caption}"
-                loading="lazy"
-                >
-            </div>
-            <div style="padding: 16px; flex-grow: 1; display: flex; flex-direction: column;">
-                <div style="
-                    font-weight: 600;
-                    font-size: 15px;
-                    margin-bottom: 6px;
-                    color: #333;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                ">
-                {caption}
-                </div>
-                {date_str}
-                <div style="margin: 8px 0; flex-grow: 1;">
-                {stars_html}
-                </div>
-                <div style="margin: 8px 0; min-height: 36px;">
-                {tags_html}
-                </div>
-                <div style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-top: 12px;
-                    color: #888;
-                    font-size: 13px;
-                    border-top: 1px solid #f0f0f0;
-                    padding-top: 10px;
-                ">
-                    <span style="display:flex; align-items:center; gap:4px;">💬 {comments_count}</span>
-                    <span style="display:flex; align-items:center; gap:4px;">👁️ {metadata.get('view_count', 0) if metadata else 0}</span>
-                </div>
-            </div>
-        </div>
-        '''
 
 # ============================================================================
 # ALBUM MANAGER
@@ -946,6 +837,7 @@ class AlbumManager:
         self.cache = CacheManager()
         self.image_processor = ImageProcessor()
         self._init_session_state()
+        self._ensure_sample_data()
     
     def _init_session_state(self):
         """Initialize session state variables"""
@@ -970,14 +862,53 @@ class AlbumManager:
                 'analytics_cache': {},
                 'toc_page': 1,
                 'gallery_page': 1,
-                'recent_searches': []
+                'show_directory_info': True
             })
     
+    def _ensure_sample_data(self):
+        """Create sample data structure if no data exists"""
+        if not Config.DATA_DIR.exists() or not any(Config.DATA_DIR.iterdir()):
+            st.info("No data found. Creating sample directory structure...")
+            self.create_sample_structure()
+    
+    def create_sample_structure(self):
+        """Create sample directory structure with example photos"""
+        sample_people = ["john-smith", "sarah-johnson", "michael-brown"]
+        
+        for person in sample_people:
+            person_dir = Config.DATA_DIR / person
+            person_dir.mkdir(exist_ok=True)
+            
+            # Create a sample README file
+            readme_file = person_dir / "README.txt"
+            readme_file.write_text(f"Photos of {person.replace('-', ' ').title()}\nAdd your photos here!")
+            
+            # Add a simple sample image
+            sample_image_path = person_dir / "sample.jpg"
+            if not sample_image_path.exists():
+                try:
+                    # Create a simple colored image as placeholder
+                    from PIL import Image, ImageDraw, ImageFont
+                    
+                    # Create image with gradient background
+                    img = Image.new('RGB', (400, 300), color='#667eea')
+                    draw = ImageDraw.Draw(img)
+                    
+                    # Draw a simple person icon
+                    draw.ellipse((150, 50, 250, 150), fill='#ffffff', outline='#4a5568')
+                    draw.rectangle((150, 150, 250, 280), fill='#ffffff', outline='#4a5568')
+                    
+                    # Add text
+                    font = ImageFont.load_default()
+                    draw.text((150, 250), person.replace('-', ' ').title(), fill='#2d3748', font=font)
+                    
+                    img.save(sample_image_path)
+                    st.success(f"Created sample image for {person}")
+                except Exception as e:
+                    st.warning(f"Could not create sample image for {person}: {str(e)}")
+    
     def scan_directory(self, data_dir: Path = None) -> Dict:
-        """
-        Scan directory for images and update database.
-        FIXED: Now accepts folder names with or without hyphens.
-        """
+        """Scan directory for images and update database"""
         data_dir = data_dir or Config.DATA_DIR
         results = {
             'total_images': 0,
@@ -992,17 +923,20 @@ class AlbumManager:
             st.warning(f"Created directory: {data_dir}")
             return results
         
-        # Find all person directories
-        # FIXED: Removed strict requirement for '-' in folder name
+        # Find all person directories - more flexible matching
         person_dirs = [d for d in data_dir.iterdir() 
-                      if d.is_dir() and not d.name.startswith('.')]
+                      if d.is_dir() and not d.name.startswith('.') 
+                      and d.name != 'thumbnails']
+        
+        if not person_dirs:
+            st.warning("No person folders found. Creating sample structure...")
+            self.create_sample_structure()
+            person_dirs = [d for d in data_dir.iterdir() 
+                          if d.is_dir() and not d.name.startswith('.') 
+                          and d.name != 'thumbnails']
         
         results['people_found'] = len(person_dirs)
         
-        if not person_dirs:
-            st.info("No folders found in the data directory. Please create a folder (e.g., 'My Family') and add images inside it.")
-            return results
-
         progress_bar = st.progress(0)
         total_files = 0
         processed_files = 0
@@ -1016,39 +950,37 @@ class AlbumManager:
             total_files += len(image_files)
         
         if total_files == 0:
-            st.warning("Found folders, but they contain no supported image files.")
+            st.info("No images found in any folders. Please add some images to your person folders.")
+            progress_bar.empty()
             return results
-
+        
         for person_dir in person_dirs:
-            # FIXED: Use the folder name directly as display name if no hyphen exists
-            display_name = person_dir.name.replace('-', ' ').replace('_', ' ').title()
-            
-            # Check if person already exists to avoid changing UUIDs constantly (which breaks links)
-            # This logic ensures we keep the same person_id if they exist
-            with sqlite3.connect(self.db.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT person_id FROM people WHERE folder_name = ?', (person_dir.name,))
-                existing_person = cursor.fetchone()
-            
-            if existing_person:
-                person_id = existing_person[0]
-            else:
-                person_id = str(uuid.uuid4())
+            display_name = self._format_name(person_dir.name)
             
             # Create or update person profile
-            person_profile = PersonProfile(
-                person_id=person_id, # Use the ID found or generated
-                folder_name=person_dir.name,
-                display_name=display_name,
-                bio=f"Photos of {display_name}",
-                birth_date=None,
-                relationship="Family/Friend",
-                contact_info="",
-                social_links={},
-                profile_image=None,
-                created_at=datetime.datetime.now()
-            )
-            self.db.add_person(person_profile)
+            existing_person = None
+            for p in self.db.get_all_people():
+                if p['folder_name'] == person_dir.name:
+                    existing_person = p
+                    break
+            
+            if not existing_person:
+                person_profile = PersonProfile(
+                    person_id=str(uuid.uuid4()),
+                    folder_name=person_dir.name,
+                    display_name=display_name,
+                    bio=f"Photos of {display_name}",
+                    birth_date=None,
+                    relationship="Family/Friend",
+                    contact_info="",
+                    social_links={},
+                    profile_image=None,
+                    created_at=datetime.datetime.now()
+                )
+                self.db.add_person(person_profile)
+                person_id = person_profile.person_id
+            else:
+                person_id = existing_person['person_id']
             
             # Process images in directory
             image_files = [
@@ -1076,31 +1008,6 @@ class AlbumManager:
                     
                     if existing:
                         results['updated_images'] += 1
-                        # Check if an album entry exists for this person/image combo
-                        # If not, create one (in case of moving images)
-                        with sqlite3.connect(self.db.db_path) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                'SELECT entry_id FROM album_entries WHERE image_id = ? AND person_id = ?',
-                                (existing[0], person_id)
-                            )
-                            if not cursor.fetchone():
-                                # Re-link existing image to this person
-                                album_entry = AlbumEntry(
-                                    entry_id=str(uuid.uuid4()),
-                                    image_id=existing[0],
-                                    person_id=person_id,
-                                    caption=img_path.stem.replace('_', ' ').title(),
-                                    description=f"Photo of {display_name}",
-                                    location="",
-                                    date_taken=ImageMetadata.from_image(img_path).created_date,
-                                    tags=[display_name.lower().replace(' ', '-'), 'photo', 'memory'],
-                                    privacy_level='public',
-                                    created_by='system',
-                                    created_at=datetime.datetime.now(),
-                                    updated_at=datetime.datetime.now()
-                                )
-                                self.db.add_album_entry(album_entry)
                         continue
                     
                     # Create thumbnail
@@ -1140,8 +1047,7 @@ class AlbumManager:
                 except Exception as e:
                     error_msg = f"Error processing {img_path}: {str(e)}"
                     results['errors'].append(error_msg)
-                    # Only print to console to avoid spamming UI, but log to results
-                    print(error_msg)
+                    st.error(error_msg)
         
         progress_bar.empty()
         
@@ -1152,8 +1058,16 @@ class AlbumManager:
     
     def _format_name(self, folder_name: str) -> str:
         """Format folder name to display name"""
-        parts = folder_name.split('-')
-        return ' '.join(part.capitalize() for part in parts)
+        # Handle various naming conventions
+        if '-' in folder_name:
+            parts = folder_name.split('-')
+            return ' '.join(part.capitalize() for part in parts)
+        elif '_' in folder_name:
+            parts = folder_name.split('_')
+            return ' '.join(part.capitalize() for part in parts)
+        else:
+            # Capitalize each word if no separator
+            return ' '.join(word.capitalize() for word in folder_name.split())
     
     def get_person_stats(self, person_id: str) -> Dict:
         """Get statistics for a person"""
@@ -1397,7 +1311,7 @@ class PhotoAlbumApp:
         """Configure Streamlit page settings"""
         st.set_page_config(
             page_title=f"{Config.APP_NAME} v{Config.VERSION}",
-            page_icon="👨‍👩‍👧‍👦",
+            page_icon="🖼️",
             layout="wide",
             initial_sidebar_state="expanded",
             menu_items={
@@ -1464,6 +1378,21 @@ class PhotoAlbumApp:
             align-items: center;
             gap: 10px;
         }
+        /* Directory Info */
+        .directory-info {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            border-left: 4px solid #2196f3;
+        }
+        .directory-info pre {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
         /* Table of Contents */
         .toc-container {
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
@@ -1522,6 +1451,63 @@ class PhotoAlbumApp:
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 1.5rem;
             margin-top: 1rem;
+        }
+        /* Image Card */
+        .image-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .image-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+        }
+        .image-card-img {
+            aspect-ratio: 1/1;
+            overflow: hidden;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .image-card-img img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.5s ease;
+        }
+        .image-card-img img:hover {
+            transform: scale(1.05);
+        }
+        .image-card-content {
+            padding: 16px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .image-card-title {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: #333;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .image-card-date {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .image-card-stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            color: #666;
+            font-size: 14px;
         }
         /* Comment Section */
         .comment-container {
@@ -1672,24 +1658,62 @@ class PhotoAlbumApp:
             background: #4299e1;
             color: white;
         }
-        /* Image Detail Container */
-        .detail-image-container {
-            width: 100%;
+        .no-photos-message {
             text-align: center;
-            background: #f8f9fa;
+            padding: 40px;
+            color: #666;
+            border: 2px dashed #e2e8f0;
             border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+            background: #f8fafc;
+        }
+        .sample-image {
+            width: 100%;
+            height: 200px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            margin: 20px 0;
         }
         </style>
         """, unsafe_allow_html=True)
+    
+    def render_directory_info(self):
+        """Show helpful information about directory structure"""
+        if st.session_state.get('show_directory_info', True):
+            st.markdown("""
+            <div class="directory-info">
+                <h3>📁 How to Set Up Your Photo Album</h3>
+                <p>To display your photos, organize them in the <code>data/</code> directory with this structure:</p>
+                <pre>
+                data/
+                ├── john-smith/          # Person folder (can use hyphens, underscores, or spaces)
+                │   ├── vacation.jpg    # Your photos
+                │   ├── birthday.png
+                │   └── ...
+                ├── sarah-johnson/      # Another person folder
+                │   └── family.jpg
+                └── ...
+                </pre>
+                <p><strong>Key points:</strong></p>
+                <ul>
+                    <li>Create a folder for each person</li>
+                    <li>Folder names can use hyphens, underscores, or spaces</li>
+                    <li>Supported image formats: JPG, JPEG, PNG, GIF, BMP, WEBP, TIFF</li>
+                    <li>After adding photos, click "📸 Scan for New Photos" in the sidebar</li>
+                </ul>
+                <p><em>This message will automatically hide once you have photos in your album.</em></p>
+            </div>
+            """, unsafe_allow_html=True)
     
     def render_header(self):
         """Render main application header"""
         st.markdown(f"""
         <div class="main-header">
-            <h1>👨‍👩‍👧‍👦 {Config.APP_NAME}</h1>
+            <h1>🖼️ {Config.APP_NAME}</h1>
             <p>Your personal photo gallery with advanced features</p>
             <div style="
                 display: flex;
@@ -1773,54 +1797,64 @@ class PhotoAlbumApp:
                 st.metric("🖼️ Photos", entries_count)
                 st.metric("⭐ Avg Rating", f"{avg_rating:.1f}")
             
-            # Actions
+            # Actions - Always show scan button prominently
             st.markdown("---")
             st.markdown("## ⚡ Quick Actions")
-            if st.button("📸 Scan for New Photos", use_container_width=True, key="scan_button"):
-                with st.spinner("Scanning directory..."):
+            
+            if st.button("📸 Scan for New Photos", use_container_width=True, type="primary"):
+                with st.spinner("🔍 Scanning directory for photos..."):
                     results = self.album_manager.scan_directory()
                 
-                success_message = f"""
-                Scan complete!
-                - New images: {results['new_images']}
-                - Updated: {results['updated_images']}
-                - Total: {results['total_images']}
-                - People: {results['people_found']}
+                # Show detailed results
+                results_message = f"""
+                ✅ Scan completed successfully!
+                • People found: {results['people_found']}
+                • New images: {results['new_images']}
+                • Updated images: {results['updated_images']}
+                • Total images processed: {results['total_images']}
                 """
                 
                 if results['errors']:
-                    success_message += f"\n\n⚠️ {len(results['errors'])} errors occurred:"
-                    for error in results['errors'][:3]:  # Show first 3 errors
-                        success_message += f"\n- {error}"
+                    results_message += f"\n\n⚠️ {len(results['errors'])} errors occurred:"
+                    for i, error in enumerate(results['errors'][:3]):  # Show first 3 errors
+                        results_message += f"\n• {error}"
                     if len(results['errors']) > 3:
-                        success_message += f"\n- and {len(results['errors'])-3} more..."
+                        results_message += f"\n• ...and {len(results['errors'])-3} more"
                 
-                st.success(success_message)
+                st.success(results_message)
+                
+                # Hide directory info if we found photos
+                if results['total_images'] > 0:
+                    st.session_state.show_directory_info = False
+                
+                st.rerun()
             
-            if st.button("🗂️ Clear Cache", use_container_width=True, key="clear_cache_button"):
+            if st.button("🗂️ Clear Cache", use_container_width=True):
                 self.album_manager.cache.clear()
-                st.success("Cache cleared!")
+                st.success("✅ Cache cleared successfully!")
+                st.rerun()
             
             # Export options
             st.markdown("---")
             st.markdown("## 📤 Export")
             export_format = st.selectbox("Format", ["json", "csv"], key="export_format")
-            if st.button("💾 Export Album Data", use_container_width=True, key="export_button"):
-                with st.spinner("Preparing export..."):
+            if st.button("💾 Export Album Data", use_container_width=True):
+                with st.spinner("📦 Preparing export..."):
                     try:
                         export_data = self.album_manager.export_album_data(export_format)
                         export_name = f"album_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.{export_format}"
                         
                         st.download_button(
-                            label=f"Download {export_format.upper()}",
+                            label=f"📥 Download {export_format.upper()}",
                             data=export_data,
                             file_name=export_name,
                             mime="application/json" if export_format == "json" else "text/csv",
                             use_container_width=True,
                             key="download_export"
                         )
+                        st.success(f"✅ {export_format.upper()} export ready!")
                     except Exception as e:
-                        st.error(f"Error during export: {str(e)}")
+                        st.error(f"❌ Error during export: {str(e)}")
     
     def render_table_of_contents(self):
         """Render interactive table of contents"""
@@ -1833,10 +1867,6 @@ class PhotoAlbumApp:
             search_query = st.text_input("🔍 Search people...", 
                                        placeholder="Type to filter...",
                                        key="toc_search")
-            if search_query and search_query not in st.session_state.recent_searches:
-                st.session_state.recent_searches.append(search_query)
-                if len(st.session_state.recent_searches) > 5:
-                    st.session_state.recent_searches.pop(0)
         
         with col2:
             sort_option = st.selectbox("Sort by", ["Name", "Photo Count", "Recent Activity"], 
@@ -1847,6 +1877,12 @@ class PhotoAlbumApp:
         
         # Get all people
         all_people = self.album_manager.db.get_all_people()
+        
+        # Show directory info if no people found
+        if not all_people:
+            self.render_directory_info()
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
         
         # Filter based on search
         if search_query:
@@ -2025,6 +2061,20 @@ class PhotoAlbumApp:
             cursor.execute(query, params)
             entries = [dict(row) for row in cursor.fetchall()]
         
+        # Show message if no entries found
+        if not entries:
+            st.markdown("""
+            <div class="no-photos-message">
+                <h3>😕 No photos found for this person</h3>
+                <p>Add some photos to their folder and click "📸 Scan for New Photos" in the sidebar.</p>
+                <div class="sample-image">
+                    Your photos will appear here
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        
         # Pagination
         total_pages = max(1, (len(entries) + items_per_page - 1) // items_per_page)
         page_number = st.session_state.get('gallery_page', 1)
@@ -2056,29 +2106,22 @@ class PhotoAlbumApp:
         st.markdown('</div>', unsafe_allow_html=True)
     
     def _render_grid_view(self, entries: List[Dict], person_info: Dict):
-        """Render images in grid view using HTML components for better styling"""
-        if not entries:
-            st.info("No photos found for this person.")
-            return
-
-        # Calculate columns based on screen width logic (Streamlit handles this, but we limit to 4 for consistency)
+        """Render images in grid view"""
         cols = st.columns(4)
-        
         for idx, entry in enumerate(entries):
             with cols[idx % 4]:
                 # Get thumbnail path or create data URL
-                thumbnail_path = entry.get('thumbnail_path')
                 img_url = ""
+                thumbnail_path = entry.get('thumbnail_path')
+                img_path = Config.DATA_DIR / entry['filepath']
                 
                 if thumbnail_path and Path(thumbnail_path).exists():
-                    # Use thumbnail for grid
                     img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
-                else:
-                    # Fallback to actual image
-                    img_path = Config.DATA_DIR / entry['filepath']
-                    if img_path.exists():
-                        # Resize on fly for grid if no thumb exists
-                        img_url = self.album_manager.image_processor.get_image_data_url(img_path, max_size=Config.THUMBNAIL_SIZE)
+                elif img_path.exists():
+                    # Create thumbnail if it doesn't exist
+                    thumbnail_path = self.album_manager.image_processor.create_thumbnail(img_path)
+                    if thumbnail_path:
+                        img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
                 
                 # Get rating and comment count
                 avg_rating, rating_count = self.album_manager.db.get_entry_ratings(entry['entry_id'])
@@ -2091,33 +2134,38 @@ class PhotoAlbumApp:
                     )
                     comment_count = cursor.fetchone()[0] or 0
                 
-                # Parse tags
-                tags = entry.get('tags', '').split(',') if entry.get('tags') else []
+                # Display image card
+                if img_url:
+                    st.image(img_url, use_container_width=True, caption=entry.get('caption', 'Untitled'))
+                else:
+                    st.image("https://via.placeholder.com/300x300/667eea/ffffff?text=No+Image", 
+                            use_container_width=True, 
+                            caption=entry.get('caption', 'Untitled'))
                 
-                # Generate HTML Card
-                card_html = UIComponents.image_card(
-                    image_url=img_url,
-                    caption=entry.get('caption', 'Untitled'),
-                    tags=tags,
-                    rating=avg_rating,
-                    comments_count=comment_count,
-                    entry_id=entry['entry_id'],
-                    metadata={'date_taken': entry.get('date_taken'), 'view_count': 0}
-                )
+                # Card content
+                st.markdown(f"""
+                <div style="text-align: center; margin-bottom: 1rem;">
+                    <div style="font-weight: 600; font-size: 16px; margin-bottom: 4px;">
+                        {entry.get('caption', 'Untitled')}
+                    </div>
+                    <div style="color: #666; font-size: 14px; margin-bottom: 8px;">
+                        {entry.get('date_taken', '')[:19] if entry.get('date_taken') else ''}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                # Render HTML Card
-                st.markdown(card_html, unsafe_allow_html=True)
-                
-                # Render Action Buttons separately to ensure they work
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    if st.button("👁️", key=f"view_{entry['entry_id']}", use_container_width=True, help="View Details"):
+                    if st.button("👁️ View", key=f"view_{entry['entry_id']}", use_container_width=True):
                         st.session_state.selected_image = entry['entry_id']
                         st.rerun()
                 with col_btn2:
                     is_favorite = entry['entry_id'] in st.session_state.get('favorites', set())
-                    fav_icon = "❤️" if is_favorite else "🤍"
-                    if st.button(fav_icon, key=f"favorite_{entry['entry_id']}", use_container_width=True, help="Toggle Favorite"):
+                    if st.button(
+                        f"{'❤️' if is_favorite else '🤍'}", 
+                        key=f"favorite_{entry['entry_id']}",
+                        use_container_width=True
+                    ):
                         if is_favorite:
                             self.album_manager.remove_from_favorites(entry['entry_id'])
                         else:
@@ -2132,19 +2180,21 @@ class PhotoAlbumApp:
                 
                 with col_img:
                     # Display thumbnail
-                    thumbnail_path = entry.get('thumbnail_path')
                     img_url = ""
+                    thumbnail_path = entry.get('thumbnail_path')
+                    img_path = Config.DATA_DIR / entry['filepath']
                     
                     if thumbnail_path and Path(thumbnail_path).exists():
                         img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
-                    else:
-                        img_path = Config.DATA_DIR / entry['filepath']
-                        img_url = self.album_manager.image_processor.get_image_data_url(img_path, max_size=Config.THUMBNAIL_SIZE) if img_path.exists() else ""
+                    elif img_path.exists():
+                        thumbnail_path = self.album_manager.image_processor.create_thumbnail(img_path)
+                        if thumbnail_path:
+                            img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
                     
                     if img_url:
-                        st.markdown(f'<img src="{img_url}" style="width:100%; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">', unsafe_allow_html=True)
+                        st.image(img_url, use_container_width=True)
                     else:
-                        st.markdown("No image available")
+                        st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", use_container_width=True)
                 
                 with col_info:
                     # Entry details
@@ -2157,6 +2207,8 @@ class PhotoAlbumApp:
                             (entry['entry_id'],)
                         )
                         comment_count = cursor.fetchone()[0] or 0
+                    
+                    tags = entry.get('tags', '').split(',') if entry.get('tags') else []
                     
                     st.markdown(f"""
                     <div style="margin-bottom: 1rem;">
@@ -2172,7 +2224,7 @@ class PhotoAlbumApp:
                             <span>⭐ {rating_count} ratings</span>
                         </div>
                         <div style="margin-top: 10px;">
-                            {UIComponents.tag_badges(entry.get('tags', '').split(',') if entry.get('tags') else [])}
+                            {UIComponents.tag_badges(tags)}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -2180,22 +2232,22 @@ class PhotoAlbumApp:
                 # Action buttons
                 col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
                 with col_btn1:
-                    if st.button("👁️ View", key=f"view_list_{entry['entry_id']}", use_container_width=True):
+                    if st.button("👁️ View", key=f"view_{entry['entry_id']}", use_container_width=True):
                         st.session_state.selected_image = entry['entry_id']
                         st.rerun()
                 with col_btn2:
-                    if st.button("💬 Comment", key=f"comment_list_{entry['entry_id']}", use_container_width=True):
+                    if st.button("💬 Comment", key=f"comment_{entry['entry_id']}", use_container_width=True):
                         st.session_state.comment_for_entry = entry['entry_id']
                         st.rerun()
                 with col_btn3:
-                    if st.button("⭐ Rate", key=f"rate_list_{entry['entry_id']}", use_container_width=True):
+                    if st.button("⭐ Rate", key=f"rate_{entry['entry_id']}", use_container_width=True):
                         st.session_state.rate_for_entry = entry['entry_id']
                         st.rerun()
                 with col_btn4:
                     is_favorite = entry['entry_id'] in st.session_state.get('favorites', set())
                     if st.button(
                         f"{'❤️' if is_favorite else '🤍'}", 
-                        key=f"favorite_list_{entry['entry_id']}",
+                        key=f"favorite_{entry['entry_id']}",
                         use_container_width=True
                     ):
                         if is_favorite:
@@ -2207,7 +2259,7 @@ class PhotoAlbumApp:
                 st.markdown("---")
     
     def render_image_detail(self, entry_id: str):
-        """Render detailed view for a single image with high-res capability"""
+        """Render detailed view for a single image"""
         entry_details = self.album_manager.db.get_entry_details(entry_id)
         if not entry_details:
             st.error("Image not found")
@@ -2224,45 +2276,38 @@ class PhotoAlbumApp:
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Display image using HTML for responsive, high-quality rendering
+            # Display image
             img_path = Config.DATA_DIR / entry_details['filepath']
-            
             if img_path.exists():
-                # Use the image processor to get a base64 string, but do NOT resize it Python-side
-                # This allows the browser to handle the full resolution, enabling zooming capability
-                st.markdown('<div class="detail-image-container">', unsafe_allow_html=True)
-                
                 try:
-                    full_img_url = self.album_manager.image_processor.get_image_data_url(img_path, max_size=None)
-                    
-                    # HTML Image with responsive width and auto height
-                    st.markdown(f'''
-                    <img src="{full_img_url}" 
-                         alt="{entry_details.get('caption', 'Image')}" 
-                         style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-                    <p style="text-align: center; color: #888; font-size: 12px; margin-top: 5px;">
-                        Click image to open in new tab for full resolution
-                    </p>
-                    ''', unsafe_allow_html=True)
+                    with Image.open(img_path) as img:
+                        # Resize for display while maintaining aspect ratio
+                        img.thumbnail(Config.PREVIEW_SIZE)
+                        st.image(img, use_container_width=True, caption=entry_details.get('caption', ''))
                 except Exception as e:
                     st.error(f"Error loading image: {str(e)}")
-                    st.image("https://via.placeholder.com/800x600/667eea/ffffff?text=Image+Error")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
+                    st.image("https://via.placeholder.com/800x600/667eea/ffffff?text=Image+Error", use_container_width=True)
+            else:
+                st.error(f"Image file not found at: {img_path}")
+                st.image("https://via.placeholder.com/800x600/667eea/ffffff?text=File+Not+Found", use_container_width=True)
             
             # Image info
             st.markdown(f"""
-            <div style="margin-top: 1.5rem;">
-                <h2>{entry_details.get('caption', 'Untitled')}</h2>
-                <p style="color: #666; font-size: 16px; line-height: 1.6;">{entry_details.get('description', '')}</p>
-                <div style="display: flex; gap: 20px; color: #555; font-size: 14px; margin: 15px 0; flex-wrap: wrap;">
-                    <div><strong>📍 Location:</strong> {entry_details.get('location', 'Unknown')}</div>
-                    <div><strong>📅 Date:</strong> {entry_details.get('date_taken', 'Unknown')[:10] if entry_details.get('date_taken') else 'Unknown'}</div>
-                    <div><strong>💾 Size:</strong> {entry_details.get('file_size', 0) / 1024:.1f} KB</div>
-                    <div><strong>📐 Dimensions:</strong> {entry_details.get('dimensions', 'Unknown')}</div>
+            <div style="margin-top: 1rem;">
+                <h3>{entry_details.get('caption', 'Untitled')}</h3>
+                <p style="color: #666;">{entry_details.get('description', '')}</p>
+                <div style="display: flex; gap: 20px; color: #666; font-size: 14px; margin: 10px 0;">
+                    <div>
+                        <strong>Location:</strong> {entry_details.get('location', 'Unknown')}
+                    </div>
+                    <div>
+                        <strong>Date:</strong> {entry_details.get('date_taken', 'Unknown')[:19] if entry_details.get('date_taken') else 'Unknown'}
+                    </div>
+                    <div>
+                        <strong>Size:</strong> {entry_details.get('file_size', 0) / 1024:.1f} KB
+                    </div>
                 </div>
-                <div style="margin: 15px 0;">
-                    <div style="font-weight: 600; margin-bottom: 5px;">Tags:</div>
+                <div style="margin: 10px 0;">
                     {UIComponents.tag_badges(entry_details.get('tags', []))}
                 </div>
             </div>
@@ -2277,15 +2322,15 @@ class PhotoAlbumApp:
             
             st.markdown("### 📊 Stats")
             st.markdown(f"""
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 10px; margin-bottom: 1rem; border: 1px solid #eaeaea;">
-                <div style="margin-bottom: 12px;">
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+                <div style="margin-bottom: 10px;">
                     <strong>Rating:</strong><br>
-                    <div style="margin: 5px 0;">{UIComponents.rating_stars(avg_rating, size=24)}</div>
+                    {UIComponents.rating_stars(avg_rating)}
                     <div style="color: #666; font-size: 14px;">
                         Based on {rating_count} ratings
                     </div>
                 </div>
-                <div style="margin-bottom: 12px;">
+                <div style="margin-bottom: 10px;">
                     <strong>Comments:</strong> {len(comments)}
                 </div>
                 <div>
@@ -2301,10 +2346,10 @@ class PhotoAlbumApp:
             if st.button("Submit Rating", use_container_width=True, key="submit_rating"):
                 try:
                     self.album_manager.rate_entry(entry_id, rating_value)
-                    st.success("Rating submitted!")
+                    st.success("✅ Rating submitted!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
             
             # Add to favorites
             is_favorite = entry_id in st.session_state.get('favorites', set())
@@ -2316,10 +2361,10 @@ class PhotoAlbumApp:
             if favorite_button:
                 if is_favorite:
                     self.album_manager.remove_from_favorites(entry_id)
-                    st.success("Removed from favorites!")
+                    st.success("✅ Removed from favorites!")
                 else:
                     self.album_manager.add_to_favorites(entry_id)
-                    st.success("Added to favorites!")
+                    st.success("✅ Added to favorites!")
                 st.rerun()
         
         # Comments section
@@ -2328,19 +2373,23 @@ class PhotoAlbumApp:
         
         # Display existing comments
         if comments:
+            st.markdown('<div class="comment-container">', unsafe_allow_html=True)
             for comment in comments[:10]:  # Limit to 10 comments initially
-                with st.container():
-                    st.markdown(f"""
-                    <div class="comment-item">
-                        <div class="comment-header">
-                            <span class="comment-author">{comment['username']}</span>
-                            <span class="comment-date">{comment.get('created_at', '')[:19]}</span>
-                        </div>
-                        <div class="comment-content">{comment['content']}</div>
+                st.markdown(f"""
+                <div class="comment-item">
+                    <div class="comment-header">
+                        <span class="comment-author">{comment['username']}</span>
+                        <span class="comment-date">{comment.get('created_at', '')[:19]}</span>
                     </div>
-                    """, unsafe_allow_html=True)
+                    <div class="comment-content">{comment['content']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            if len(comments) > 10:
+                st.info(f"Showing 10 of {len(comments)} comments. Scroll up to see more.")
         else:
-            st.info("No comments yet. Be the first to comment!")
+            st.info("🗨️ No comments yet. Be the first to comment!")
         
         # Add comment form
         st.markdown("### ✏️ Add a Comment")
@@ -2361,12 +2410,12 @@ class PhotoAlbumApp:
                             comment_text,
                             st.session_state.username
                         )
-                        st.success("Comment posted!")
+                        st.success("✅ Comment posted successfully!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error: {str(e)}")
+                        st.error(f"❌ Error: {str(e)}")
                 else:
-                    st.warning("Please enter a comment")
+                    st.warning("📝 Please enter a comment")
         with col2:
             if st.button("Cancel", use_container_width=True, key="cancel_comment"):
                 st.rerun()
@@ -2386,9 +2435,9 @@ class PhotoAlbumApp:
                         if value and str(value).strip():  # Skip None/empty values
                             st.text(f"{key}: {value}")
                 else:
-                    st.info("No EXIF data available")
+                    st.info("ℹ️ No EXIF data available")
             else:
-                st.info("No EXIF data available")
+                st.info("ℹ️ No EXIF data available")
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -2408,18 +2457,12 @@ class PhotoAlbumApp:
         with col2:
             search_button = st.button("Search", use_container_width=True, type="primary", key="search_button")
         
-        if search_query:
-            if search_query not in st.session_state.recent_searches:
-                st.session_state.recent_searches.append(search_query)
-                if len(st.session_state.recent_searches) > 5:
-                    st.session_state.recent_searches.pop(0)
-        
-        if search_button and search_query:
-            with st.spinner("Searching..."):
-                results = self.album_manager.db.search_entries(search_query)
+        if search_button and search_query.strip():
+            with st.spinner("🔍 Searching..."):
+                results = self.album_manager.db.search_entries(search_query.strip())
             
             if results:
-                st.success(f"Found {len(results)} results")
+                st.success(f"✅ Found {len(results)} results for '{search_query}'")
                 
                 # Display results
                 for result in results:
@@ -2429,10 +2472,19 @@ class PhotoAlbumApp:
                             # Try to display thumbnail
                             img_path = Config.DATA_DIR / result.get('filepath', '')
                             if img_path.exists():
-                                st.image(
-                                    self.album_manager.image_processor.get_image_data_url(img_path, max_size=Config.THUMBNAIL_SIZE),
-                                    width=150
-                                )
+                                thumbnail_path = Path(result.get('thumbnail_path', ''))
+                                if thumbnail_path.exists():
+                                    st.image(
+                                        self.album_manager.image_processor.get_image_data_url(thumbnail_path),
+                                        width=150
+                                    )
+                                else:
+                                    st.image(
+                                        self.album_manager.image_processor.get_image_data_url(img_path),
+                                        width=150
+                                    )
+                            else:
+                                st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", width=150)
                         with col_info:
                             st.write(f"**Caption:** {result['caption']}")
                             st.write(f"**Description:** {result.get('description', 'No description')}")
@@ -2443,18 +2495,17 @@ class PhotoAlbumApp:
                             st.session_state.selected_image = result['entry_id']
                             st.rerun()
             else:
-                st.warning("No results found")
+                st.warning(f"😅 No results found for '{search_query}'. Try different keywords.")
         
-        # Recent searches
-        if st.session_state.recent_searches:
-            st.markdown("---")
-            st.markdown("### 🔍 Recent Searches")
-            cols = st.columns(3)
-            for idx, search in enumerate(st.session_state.recent_searches[-6:]):
-                with cols[idx % 3]:
-                    if st.button(search, use_container_width=True, key=f"recent_search_{idx}"):
-                        st.session_state.global_search = search
-                        st.rerun()
+        # Recent searches info
+        st.markdown("---")
+        st.markdown("### 💡 Search Tips")
+        st.markdown("""
+        - Search by person name (e.g., "john")
+        - Search by photo caption (e.g., "vacation")
+        - Search by description keywords
+        - Search by tags (e.g., "birthday", "family")
+        """)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -2462,6 +2513,17 @@ class PhotoAlbumApp:
         """Render main dashboard with overview"""
         st.markdown('<div class="section-container">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">📊 Dashboard Overview</div>', unsafe_allow_html=True)
+        
+        # Show directory info if no photos
+        with sqlite3.connect(self.album_manager.db.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM album_entries')
+            total_photos = cursor.fetchone()[0]
+            
+            if total_photos == 0:
+                self.render_directory_info()
+                st.markdown('</div>', unsafe_allow_html=True)
+                return
         
         # Quick stats
         with sqlite3.connect(self.album_manager.db.db_path) as conn:
@@ -2526,8 +2588,7 @@ class PhotoAlbumApp:
             if monthly_stats:
                 chart_data = []
                 for month, count in monthly_stats:
-                    # Ensure month is in correct format
-                    if month:
+                    if month:  # Ensure month is not None
                         chart_data.append({'Month': month, 'Photos': count})
                 
                 if chart_data:
@@ -2559,10 +2620,20 @@ class PhotoAlbumApp:
             cols = st.columns(3)
             for idx, photo in enumerate(recent_photos):
                 with cols[idx % 3]:
-                    thumbnail_path = photo.get('thumbnail_path')
-                    if thumbnail_path and Path(thumbnail_path).exists():
-                        img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
+                    thumbnail_path = Path(photo.get('thumbnail_path', ''))
+                    img_url = ""
+                    
+                    if thumbnail_path.exists():
+                        img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
+                    else:
+                        img_path = Config.DATA_DIR / photo['filepath']
+                        if img_path.exists():
+                            img_url = self.album_manager.image_processor.get_image_data_url(img_path)
+                    
+                    if img_url:
                         st.image(img_url, use_container_width=True)
+                    else:
+                        st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", use_container_width=True)
                     
                     st.caption(f"**{photo['caption']}**")
                     st.caption(f"By: {photo['display_name']}")
@@ -2584,32 +2655,36 @@ class PhotoAlbumApp:
         favorites = self.album_manager.get_user_favorites()
         
         if not favorites:
-            st.info("You haven't added any photos to favorites yet.")
             st.markdown("""
-            To add photos to favorites:
-            1. Browse photos in the Table of Contents tab
-            2. Click on a photo to view details
-            3. Click the "🤍 Add to Favorites" button
-            """)
+            <div class="no-photos-message">
+                <h3>🤍 No favorite photos yet</h3>
+                <p>Add photos to your favorites by clicking the heart icon (🤍) on any photo.</p>
+                <div class="sample-image">
+                    Your favorites will appear here
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.write(f"You have {len(favorites)} favorite photos")
+            st.write(f"✨ You have {len(favorites)} favorite photos")
             
             # Display favorites in a grid
             cols = st.columns(3)
             for idx, entry in enumerate(favorites):
                 with cols[idx % 3]:
-                    thumbnail_path = entry.get('thumbnail_path')
+                    thumbnail_path = Path(entry.get('thumbnail_path', ''))
                     img_url = ""
                     
-                    if thumbnail_path and Path(thumbnail_path).exists():
-                        img_url = self.album_manager.image_processor.get_image_data_url(Path(thumbnail_path))
+                    if thumbnail_path.exists():
+                        img_url = self.album_manager.image_processor.get_image_data_url(thumbnail_path)
                     else:
                         img_path = Config.DATA_DIR / entry['filepath']
                         if img_path.exists():
-                            img_url = self.album_manager.image_processor.get_image_data_url(img_path, max_size=Config.THUMBNAIL_SIZE)
+                            img_url = self.album_manager.image_processor.get_image_data_url(img_path)
                     
                     if img_url:
                         st.image(img_url, use_container_width=True)
+                    else:
+                        st.image("https://via.placeholder.com/150x150/667eea/ffffff?text=No+Image", use_container_width=True)
                     
                     st.caption(entry.get('caption', 'Untitled'))
                     col_btn1, col_btn2 = st.columns(2)
@@ -2620,7 +2695,7 @@ class PhotoAlbumApp:
                     with col_btn2:
                         if st.button("Remove", key=f"remove_fav_{entry['entry_id']}", use_container_width=True):
                             self.album_manager.remove_from_favorites(entry['entry_id'])
-                            st.success("Removed from favorites!")
+                            st.success("✅ Removed from favorites!")
                             st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -2648,14 +2723,12 @@ class PhotoAlbumApp:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔄 Rebuild Thumbnails", use_container_width=True, key="rebuild_thumbnails"):
-                with st.spinner("Rebuilding thumbnails..."):
-                    # This would rebuild all thumbnails
-                    st.info("Thumbnail rebuild functionality would be implemented here")
+                with st.spinner("🔄 Rebuilding thumbnails..."):
+                    st.info("🔄 Thumbnail rebuild functionality will be implemented in a future version")
         with col2:
             if st.button("⚡ Optimize Database", use_container_width=True, key="optimize_db"):
-                with st.spinner("Optimizing database..."):
-                    # This would optimize the SQLite database
-                    st.info("Database optimization functionality would be implemented here")
+                with st.spinner("⚡ Optimizing database..."):
+                    st.info("⚡ Database optimization functionality will be implemented in a future version")
         
         # Backup and restore
         st.markdown("---")
@@ -2663,16 +2736,16 @@ class PhotoAlbumApp:
         tab1, tab2 = st.tabs(["Backup", "Restore"])
         
         with tab1:
-            st.info("Create a backup of your album data")
+            st.info("💾 Create a backup of your album data")
             backup_format = st.selectbox("Backup format", ["JSON", "CSV"], key="backup_format")
             if st.button("Create Backup", type="primary", key="create_backup"):
-                with st.spinner("Creating backup..."):
+                with st.spinner("💾 Creating backup..."):
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     backup_data = self.album_manager.export_album_data(
                         "json" if backup_format == "JSON" else "csv"
                     )
                     st.download_button(
-                        label=f"Download {backup_format} Backup",
+                        label=f"📥 Download {backup_format} Backup",
                         data=backup_data,
                         file_name=f"album_backup_{timestamp}.{backup_format.lower()}",
                         mime="application/octet-stream",
@@ -2685,19 +2758,19 @@ class PhotoAlbumApp:
                                             type=['json', 'csv'], 
                                             key="backup_uploader")
             if uploaded_file and st.button("Restore from Backup", type="secondary", key="restore_backup"):
-                st.error("Restore functionality is not implemented in this demo version")
+                st.error("❌ Restore functionality is not implemented in this demo version")
         
         # Danger zone
         st.markdown("---")
         st.markdown("### ⚠️ Danger Zone")
         with st.expander("Advanced Operations", expanded=False):
-            st.warning("These operations cannot be undone!")
+            st.warning("⚠️ These operations cannot be undone!")
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("Clear All Data", type="secondary", use_container_width=True, key="clear_all_data"):
                     if st.checkbox("I understand this will delete all data", key="confirm_delete"):
                         if st.button("Confirm Delete All Data", type="primary", key="confirm_delete_button"):
-                            st.error("Data deletion is not implemented in this demo version")
+                            st.error("❌ Data deletion is not implemented in this demo version")
             with col2:
                 if st.button("Reset Application", type="secondary", use_container_width=True, key="reset_app"):
                     if st.checkbox("Reset all settings and cache", key="confirm_reset"):
@@ -2748,51 +2821,11 @@ class PhotoAlbumApp:
             self.render_image_detail(st.session_state.selected_image)
 
 # ============================================================================
-# APPLICATION INITIALIZATION AND ENTRY POINT
-# ============================================================================
-def initialize_application():
-    """Initialize the application with default data if needed"""
-    # Create necessary directories
-    Config.init_directories()
-    
-    return True
-
-def create_sample_data():
-    """Create sample data for demonstration purposes"""
-    # Create sample person directories
-    sample_people = ["john-smith", "sarah-johnson", "michael-brown"]
-    
-    for person in sample_people:
-        person_dir = Config.DATA_DIR / person
-        person_dir.mkdir(exist_ok=True)
-        
-        # Create a sample README file
-        readme_file = person_dir / "README.txt"
-        readme_file.write_text(f"Photos of {person.replace('-', ' ').title()}\nAdd your photos here!")
-    
-    st.success(f"Created sample data structure with {len(sample_people)} person folders")
-
-# ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 if __name__ == "__main__":
-    # Set up Streamlit page
-    st.set_page_config(
-        page_title="MemoryVault Pro",
-        page_icon="👨‍👩‍👧‍👦",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    # Initialize application
+    # Initialize directories first
     Config.init_directories()
-    
-    # Check if we need to create sample data
-    if not any(Config.DATA_DIR.iterdir()):
-        st.info("No data found. Let's set up your album!")
-        if st.button("Create Sample Data Structure"):
-            create_sample_data()
-            st.rerun()
     
     # Create and run the application
     app = PhotoAlbumApp()
