@@ -4,3 +4,6 @@ librosa
 soundfile
 numpy
 pydub
+opencv-python
+rembg
+scikit-image 
