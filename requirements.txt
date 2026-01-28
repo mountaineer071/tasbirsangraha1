@@ -5,5 +5,14 @@ soundfile
 numpy
 pydub
 opencv-python
+scipy
 rembg
-scikit-image 
+scikit-image
+torch
+torchvision
+transformers
+diffusers
+accelerate
+xformers
+triton
+replicate
