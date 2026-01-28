@@ -3,3 +3,4 @@ pillow
 librosa
 soundfile
 numpy
+pydub
