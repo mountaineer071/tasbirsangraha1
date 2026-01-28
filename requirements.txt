@@ -16,3 +16,4 @@ accelerate
 xformers
 triton
 replicate
+openai
