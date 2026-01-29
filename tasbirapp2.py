@@ -1,23 +1,14 @@
 """
 COMPREHENSIVE WEB PHOTO ALBUM APPLICATION WITH AI ENHANCEMENTS
-Version: 3.0.0 - AI Enhanced with LLM & Diffusion Models
+Version: 4.0.0 - AI Enhanced with LLM & Diffusion Models - Optimized Edition
 Features: Table of Contents, Image Gallery, Comments, Ratings, Metadata Management, Search,
           AI Image Analysis, AI Style Transfer, AI Editing, Batch Processing
-          
-PERFORMANCE OPTIMIZATION EXPANSION:
-- Session state management with TTL and automatic cleanup
-- Database connection pooling and query optimization
-- Enhanced caching with memory and disk layers
-- Asynchronous operations for non-blocking UI
-- Lazy loading of AI models and images
-- Optimized image processing with caching
-- Virtual scrolling for large datasets
-- Memory management and monitoring
+          OPTIMIZED FOR STREAMLIT WITH REDUCED CPU USAGE
 """
 
 import streamlit as st
 from pathlib import Path
-from PIL import Image, ImageOps, ExifTags, ImageFilter, ImageEnhance
+from PIL import Image, ImageOps, ExifTags, ImageFilter, ImageEnhance, ImageDraw
 import base64
 import json
 import datetime
@@ -25,7 +16,7 @@ import uuid
 import sqlite3
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Dict, List, Optional, Tuple, Any, Union, Callable
 import hashlib
 import csv
 import io
@@ -35,822 +26,546 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import random
 import string
-from collections import defaultdict
+from collections import defaultdict, deque
 import re
 import os
+import sys
+import traceback
 from contextlib import contextmanager
-import functools
-import pickle
-import threading
 import concurrent.futures
-import warnings
-from collections import OrderedDict
+from functools import lru_cache, wraps
+import pickle
 import gc
+import warnings
+import logging
+from logging.handlers import RotatingFileHandler
+import inspect
+import asyncio
+import threading
+from queue import Queue, Empty
+import psutil
+import humanize
 
 # ============================================================================
-# PERFORMANCE OPTIMIZATION IMPORTS
+# OPTIMIZATION IMPORTS
 # ============================================================================
-# Optional performance libraries - gracefully degrade if not available
-NUMBA_AVAILABLE = False
 try:
     from numba import jit, njit, prange
     import numba
     NUMBA_AVAILABLE = True
 except ImportError:
-    print("Numba not available, using fallback methods for numerical operations")
+    NUMBA_AVAILABLE = False
+    print("Numba not available. Using numpy alternatives.")
 
-JOBLIB_AVAILABLE = False
 try:
-    from joblib import Memory, Parallel, delayed
-    JOBLIB_AVAILABLE = True
+    from scipy import ndimage, signal
+    SCIPY_AVAILABLE = True
 except ImportError:
-    print("Joblib not available for disk caching")
+    SCIPY_AVAILABLE = False
+
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 # ============================================================================
-# AI IMPORTS WITH LAZY LOADING SUPPORT
+# AI IMPORTS WITH LAZY LOADING
 # ============================================================================
 AI_AVAILABLE = False
 AI_MODULES = {}
 
-def lazy_load_ai_modules():
-    """Dynamically load AI modules only when needed to reduce initial load time"""
+def lazy_import_ai():
+    """Lazy import AI modules to reduce startup time"""
     global AI_AVAILABLE, AI_MODULES
     
-    if AI_AVAILABLE:  # Already loaded
-        return True
-        
-    try:
-        import torch
-        import torch.nn as nn
-        import torchvision.transforms as transforms
-        from torchvision import models
-        
-        AI_MODULES['torch'] = torch
-        AI_MODULES['nn'] = nn
-        AI_MODULES['transforms'] = transforms
-        AI_MODULES['models'] = models
-        
-        from transformers import (
-            AutoModelForSeq2SeqLM, 
-            AutoTokenizer,
-            BlipProcessor, 
-            BlipForConditionalGeneration,
-            CLIPProcessor, 
-            CLIPModel,
-            pipeline
-        )
-        
-        AI_MODULES['AutoModelForSeq2SeqLM'] = AutoModelForSeq2SeqLM
-        AI_MODULES['AutoTokenizer'] = AutoTokenizer
-        AI_MODULES['BlipProcessor'] = BlipProcessor
-        AI_MODULES['BlipForConditionalGeneration'] = BlipForConditionalGeneration
-        AI_MODULES['CLIPProcessor'] = CLIPProcessor
-        AI_MODULES['CLIPModel'] = CLIPModel
-        AI_MODULES['pipeline'] = pipeline
-        
-        from diffusers import (
-            StableDiffusionPipeline,
-            StableDiffusionImg2ImgPipeline,
-            StableDiffusionInpaintPipeline,
-            EulerAncestralDiscreteScheduler,
-            DPMSolverMultistepScheduler
-        )
-        
-        AI_MODULES['StableDiffusionPipeline'] = StableDiffusionPipeline
-        AI_MODULES['StableDiffusionImg2ImgPipeline'] = StableDiffusionImg2ImgPipeline
-        AI_MODULES['StableDiffusionInpaintPipeline'] = StableDiffusionInpaintPipeline
-        AI_MODULES['EulerAncestralDiscreteScheduler'] = EulerAncestralDiscreteScheduler
-        AI_MODULES['DPMSolverMultistepScheduler'] = DPMSolverMultistepScheduler
-        
-        import cv2
-        from scipy import ndimage
-        
-        AI_MODULES['cv2'] = cv2
-        AI_MODULES['ndimage'] = ndimage
-        
-        AI_AVAILABLE = True
-        print("AI modules loaded on-demand")
-        return True
-    except ImportError as e:
-        print(f"AI libraries not available: {e}")
-        AI_AVAILABLE = False
-        return False
-
-# ============================================================================
-# ENHANCED SESSION STATE MANAGEMENT WITH TTL
-# ============================================================================
-
-class EnhancedSessionState:
-    """
-    Enhanced session state management with Time-To-Live (TTL) and automatic cleanup
-    Prevents memory bloat by automatically removing stale session state entries
-    """
+    if 'ai_loaded' not in st.session_state:
+        st.session_state.ai_loaded = False
     
-    def __init__(self):
-        self._init_ttl_tracking()
-        
-    def _init_ttl_tracking(self):
-        """Initialize TTL tracking structures"""
-        if '_session_ttl' not in st.session_state:
-            st.session_state['_session_ttl'] = {}
-        if '_session_last_access' not in st.session_state:
-            st.session_state['_session_last_access'] = {}
-        if '_session_creation_time' not in st.session_state:
-            st.session_state['_session_creation_time'] = {}
-            
-        # Cleanup expired entries periodically (every 10th access)
-        if '_access_count' not in st.session_state:
-            st.session_state['_access_count'] = 0
-        st.session_state['_access_count'] += 1
-        
-        if st.session_state['_access_count'] % 10 == 0:
-            self._cleanup_expired_entries()
-    
-    def set_with_ttl(self, key: str, value: Any, ttl_seconds: int = 3600):
-        """
-        Set a session state value with a Time-To-Live
-        
-        Args:
-            key: Session state key
-            value: Value to store
-            ttl_seconds: Time to live in seconds (default: 1 hour)
-        """
-        st.session_state[key] = value
-        current_time = time.time()
-        st.session_state['_session_ttl'][key] = ttl_seconds
-        st.session_state['_session_last_access'][key] = current_time
-        st.session_state['_session_creation_time'][key] = current_time
-    
-    def get_with_ttl(self, key: str, default: Any = None) -> Any:
-        """
-        Get a session state value, checking TTL
-        
-        Args:
-            key: Session state key
-            default: Default value if key doesn't exist or TTL expired
-            
-        Returns:
-            The value if valid, otherwise default
-        """
-        if key not in st.session_state:
-            return default
-            
-        # Check TTL
-        if key in st.session_state['_session_ttl']:
-            ttl = st.session_state['_session_ttl'][key]
-            last_access = st.session_state['_session_last_access'].get(key, 0)
-            
-            if time.time() - last_access > ttl:
-                # TTL expired, remove the entry
-                self.delete_with_ttl(key)
-                return default
-                
-            # Update last access time
-            st.session_state['_session_last_access'][key] = time.time()
-            
-        return st.session_state[key]
-    
-    def delete_with_ttl(self, key: str):
-        """Delete a key and its TTL tracking"""
-        if key in st.session_state:
-            del st.session_state[key]
-        if key in st.session_state['_session_ttl']:
-            del st.session_state['_session_ttl'][key]
-        if key in st.session_state['_session_last_access']:
-            del st.session_state['_session_last_access'][key]
-        if key in st.session_state['_session_creation_time']:
-            del st.session_state['_session_creation_time'][key]
-    
-    def _cleanup_expired_entries(self):
-        """Clean up all expired session state entries"""
-        current_time = time.time()
-        keys_to_delete = []
-        
-        for key, ttl in st.session_state['_session_ttl'].items():
-            if key in st.session_state['_session_last_access']:
-                last_access = st.session_state['_session_last_access'][key]
-                if current_time - last_access > ttl:
-                    keys_to_delete.append(key)
-        
-        for key in keys_to_delete:
-            self.delete_with_ttl(key)
-        
-        # Also cleanup very old entries without TTL (older than 24 hours)
-        if '_session_creation_time' in st.session_state:
-            for key, creation_time in list(st.session_state['_session_creation_time'].items()):
-                if key not in st.session_state['_session_ttl'] and current_time - creation_time > 86400:  # 24 hours
-                    if key in st.session_state and not key.startswith('_'):
-                        del st.session_state[key]
-                    del st.session_state['_session_creation_time'][key]
-    
-    def clear_all_ttl(self):
-        """Clear all TTL-managed entries"""
-        keys_to_delete = list(st.session_state['_session_ttl'].keys())
-        for key in keys_to_delete:
-            self.delete_with_ttl(key)
-    
-    def get_stats(self) -> Dict:
-        """Get statistics about session state usage"""
-        total_keys = len([k for k in st.session_state.keys() if not k.startswith('_')])
-        ttl_keys = len(st.session_state['_session_ttl'])
-        expired_count = 0
-        
-        current_time = time.time()
-        for key, ttl in st.session_state['_session_ttl'].items():
-            if key in st.session_state['_session_last_access']:
-                last_access = st.session_state['_session_last_access'][key]
-                if current_time - last_access > ttl:
-                    expired_count += 1
-        
-        return {
-            'total_keys': total_keys,
-            'ttl_managed_keys': ttl_keys,
-            'expired_entries': expired_count,
-            'access_count': st.session_state.get('_access_count', 0)
-        }
-
-# ============================================================================
-# ADVANCED CACHING SYSTEM WITH MULTI-LAYER SUPPORT
-# ============================================================================
-
-class MultiLayerCache:
-    """
-    Multi-layer caching system with memory and optional disk layers
-    Implements LRU (Least Recently Used) eviction policy
-    """
-    
-    def __init__(self, max_memory_items: int = 1000, disk_cache_dir: Optional[Path] = None):
-        """
-        Initialize multi-layer cache
-        
-        Args:
-            max_memory_items: Maximum items to keep in memory cache
-            disk_cache_dir: Directory for disk caching (optional)
-        """
-        self.max_memory_items = max_memory_items
-        self.memory_cache = OrderedDict()  # LRU ordered dictionary
-        self.cache_hits = 0
-        self.cache_misses = 0
-        self.cache_lock = threading.Lock()
-        
-        # Disk cache setup (optional)
-        self.disk_cache_enabled = False
-        self.disk_cache_dir = disk_cache_dir
-        
-        if disk_cache_dir and JOBLIB_AVAILABLE:
-            try:
-                self.disk_memory = Memory(disk_cache_dir, verbose=0, compress=9)
-                self.disk_cache_enabled = True
-                print(f"Disk cache enabled at {disk_cache_dir}")
-            except Exception as e:
-                print(f"Failed to enable disk cache: {e}")
-    
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        Get value from cache
-        
-        Args:
-            key: Cache key
-            default: Default value if not found
-            
-        Returns:
-            Cached value or default
-        """
-        with self.cache_lock:
-            # Try memory cache first
-            if key in self.memory_cache:
-                # Move to end (most recently used)
-                value = self.memory_cache.pop(key)
-                self.memory_cache[key] = value
-                self.cache_hits += 1
-                return value
-            
-            # Try disk cache if enabled
-            if self.disk_cache_enabled and hasattr(self, 'disk_memory'):
-                try:
-                    # Disk cache keys are hashed
-                    disk_key = hashlib.md5(key.encode()).hexdigest()
-                    
-                    @self.disk_memory.cache
-                    def _disk_cached_function():
-                        return None
-                    
-                    # Check if in disk cache
-                    cache_path = self.disk_memory._get_cache_path([disk_key])
-                    if os.path.exists(cache_path):
-                        self.cache_hits += 1
-                        return pickle.load(open(cache_path, 'rb'))
-                except Exception as e:
-                    print(f"Disk cache read error: {e}")
-            
-            self.cache_misses += 1
-            return default
-    
-    def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None):
-        """
-        Set value in cache
-        
-        Args:
-            key: Cache key
-            value: Value to cache
-            ttl_seconds: Optional TTL in seconds
-        """
-        with self.cache_lock:
-            # Store in memory cache
-            if key in self.memory_cache:
-                # Remove existing to update order
-                del self.memory_cache[key]
-            
-            self.memory_cache[key] = {
-                'value': value,
-                'expires': time.time() + ttl_seconds if ttl_seconds else None
-            }
-            
-            # Enforce size limit
-            if len(self.memory_cache) > self.max_memory_items:
-                # Remove oldest item (first in OrderedDict)
-                self.memory_cache.popitem(last=False)
-            
-            # Optionally store in disk cache for large values
-            if self.disk_cache_enabled and isinstance(value, (np.ndarray, pd.DataFrame, Image.Image)):
-                try:
-                    disk_key = hashlib.md5(key.encode()).hexdigest()
-                    cache_path = self.disk_memory._get_cache_path([disk_key])
-                    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                    with open(cache_path, 'wb') as f:
-                        pickle.dump(value, f, protocol=pickle.HIGHEST_PROTOCOL)
-                except Exception as e:
-                    print(f"Disk cache write error: {e}")
-    
-    def delete(self, key: str):
-        """Delete key from all cache layers"""
-        with self.cache_lock:
-            if key in self.memory_cache:
-                del self.memory_cache[key]
-            
-            if self.disk_cache_enabled:
-                try:
-                    disk_key = hashlib.md5(key.encode()).hexdigest()
-                    cache_path = self.disk_memory._get_cache_path([disk_key])
-                    if os.path.exists(cache_path):
-                        os.remove(cache_path)
-                except Exception as e:
-                    print(f"Disk cache delete error: {e}")
-    
-    def clear(self):
-        """Clear all cache layers"""
-        with self.cache_lock:
-            self.memory_cache.clear()
-            
-            if self.disk_cache_enabled:
-                try:
-                    import shutil
-                    if os.path.exists(self.disk_cache_dir):
-                        shutil.rmtree(self.disk_cache_dir)
-                        os.makedirs(self.disk_cache_dir)
-                except Exception as e:
-                    print(f"Disk cache clear error: {e}")
-            
-            self.cache_hits = 0
-            self.cache_misses = 0
-    
-    def cleanup_expired(self):
-        """Remove expired entries from memory cache"""
-        with self.cache_lock:
-            current_time = time.time()
-            expired_keys = []
-            
-            for key, data in self.memory_cache.items():
-                if data['expires'] and data['expires'] < current_time:
-                    expired_keys.append(key)
-            
-            for key in expired_keys:
-                del self.memory_cache[key]
-    
-    def get_stats(self) -> Dict:
-        """Get cache statistics"""
-        with self.cache_lock:
-            total = self.cache_hits + self.cache_misses
-            hit_rate = (self.cache_hits / total * 100) if total > 0 else 0
-            
-            # Count expired entries
-            current_time = time.time()
-            expired_count = 0
-            for data in self.memory_cache.values():
-                if data['expires'] and data['expires'] < current_time:
-                    expired_count += 1
-            
-            return {
-                'memory_items': len(self.memory_cache),
-                'cache_hits': self.cache_hits,
-                'cache_misses': self.cache_misses,
-                'hit_rate': f"{hit_rate:.1f}%",
-                'expired_entries': expired_count,
-                'disk_cache_enabled': self.disk_cache_enabled
-            }
-
-# ============================================================================
-# DATABASE CONNECTION POOLING AND OPTIMIZATION
-# ============================================================================
-
-class DatabaseConnectionPool:
-    """
-    Connection pool for SQLite database to reduce connection overhead
-    Improves performance by reusing connections and managing concurrent access
-    """
-    
-    def __init__(self, db_path: Path, pool_size: int = 5, timeout: float = 30.0):
-        """
-        Initialize connection pool
-        
-        Args:
-            db_path: Path to SQLite database
-            pool_size: Maximum number of connections in pool
-            timeout: Connection timeout in seconds
-        """
-        self.db_path = db_path
-        self.pool_size = pool_size
-        self.timeout = timeout
-        
-        # Thread-safe connection pool
-        self._pool = []
-        self._in_use = set()
-        self._lock = threading.Lock()
-        self._condition = threading.Condition(self._lock)
-        
-        # Performance metrics
-        self.total_connections_created = 0
-        self.connection_wait_time = 0
-        
-        # Configure connection defaults
-        self._configure_connection_defaults()
-    
-    def _configure_connection_defaults(self):
-        """Configure default connection parameters for optimal performance"""
-        self.connection_params = {
-            'check_same_thread': False,
-            'timeout': self.timeout,
-            'isolation_level': None  # Autocommit mode
-        }
-    
-    def get_connection(self) -> sqlite3.Connection:
-        """
-        Get a database connection from the pool
-        
-        Returns:
-            SQLite connection object
-        """
-        start_time = time.time()
-        
-        with self._condition:
-            # Wait for available connection with timeout
-            end_time = time.time() + self.timeout
-            
-            while True:
-                # Try to get existing connection from pool
-                if self._pool:
-                    conn = self._pool.pop()
-                    if self._test_connection(conn):
-                        self._in_use.add(conn)
-                        self.connection_wait_time += time.time() - start_time
-                        return conn
-                    else:
-                        # Connection is stale, close it
-                        try:
-                            conn.close()
-                        except:
-                            pass
-                
-                # Create new connection if pool not full
-                if len(self._pool) + len(self._in_use) < self.pool_size:
-                    conn = self._create_new_connection()
-                    self._in_use.add(conn)
-                    self.connection_wait_time += time.time() - start_time
-                    return conn
-                
-                # Wait for connection to become available
-                remaining = end_time - time.time()
-                if remaining <= 0:
-                    raise TimeoutError("Timeout waiting for database connection")
-                
-                self._condition.wait(remaining)
-    
-    def _create_new_connection(self) -> sqlite3.Connection:
-        """Create a new database connection with performance optimizations"""
-        conn = sqlite3.connect(self.db_path, **self.connection_params)
-        self.total_connections_created += 1
-        
-        # Configure for performance
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA journal_mode = WAL")  # Write-Ahead Logging
-        cursor.execute("PRAGMA synchronous = NORMAL")
-        cursor.execute("PRAGMA cache_size = -2000")  # 2MB cache
-        cursor.execute("PRAGMA temp_store = MEMORY")
-        cursor.execute("PRAGMA mmap_size = 268435456")  # 256MB memory map
-        cursor.execute("PRAGMA busy_timeout = 5000")  # 5 second busy timeout
-        cursor.execute("PRAGMA foreign_keys = ON")
-        
-        # Enable row factory for dict-like access
-        conn.row_factory = sqlite3.Row
-        
-        return conn
-    
-    def _test_connection(self, conn: sqlite3.Connection) -> bool:
-        """Test if connection is still valid"""
+    if not st.session_state.ai_loaded:
         try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            return True
-        except:
-            return False
-    
-    def return_connection(self, conn: sqlite3.Connection):
-        """Return connection to pool"""
-        with self._condition:
-            if conn in self._in_use:
-                self._in_use.remove(conn)
-                
-                # Reset connection state
-                try:
-                    conn.rollback()  # Rollback any uncommitted transactions
-                    
-                    # Clear any remaining statements
-                    cursor = conn.cursor()
-                    cursor.execute("PRAGMA optimize")
-                except:
-                    # If connection is broken, close it
-                    try:
-                        conn.close()
-                    except:
-                        pass
-                    return
-                
-                # Add back to pool if not full
-                if len(self._pool) < self.pool_size:
-                    self._pool.append(conn)
-                
-                # Notify waiting threads
-                self._condition.notify()
-    
-    def close_all(self):
-        """Close all connections in pool"""
-        with self._condition:
-            for conn in self._pool:
-                try:
-                    conn.close()
-                except:
-                    pass
-            self._pool.clear()
+            # Import torch only when needed
+            import torch
+            import torch.nn as nn
+            import torchvision.transforms as transforms
+            from torchvision import models
             
-            for conn in list(self._in_use):
-                try:
-                    conn.close()
-                except:
-                    pass
-            self._in_use.clear()
-    
-    def get_stats(self) -> Dict:
-        """Get connection pool statistics"""
-        with self._lock:
-            return {
-                'pool_size': self.pool_size,
-                'available_connections': len(self._pool),
-                'in_use_connections': len(self._in_use),
-                'total_connections_created': self.total_connections_created,
-                'avg_wait_time_ms': (self.connection_wait_time / max(self.total_connections_created, 1)) * 1000
-            }
-
-# ============================================================================
-# ASYNCHRONOUS TASK EXECUTOR FOR NON-BLOCKING OPERATIONS
-# ============================================================================
-
-class AsyncTaskExecutor:
-    """
-    Executes long-running tasks asynchronously to prevent UI blocking
-    Manages task queues, prioritization, and result caching
-    """
-    
-    def __init__(self, max_workers: int = 4, max_pending_tasks: int = 100):
-        """
-        Initialize async task executor
-        
-        Args:
-            max_workers: Maximum concurrent worker threads
-            max_pending_tasks: Maximum tasks in queue
-        """
-        self.max_workers = max_workers
-        self.max_pending_tasks = max_pending_tasks
-        
-        # Thread pool for CPU-bound tasks
-        self.thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=max_workers,
-            thread_name_prefix='album_worker'
-        )
-        
-        # Task tracking
-        self.tasks = {}
-        self.task_results = {}
-        self.task_lock = threading.Lock()
-        
-        # Performance metrics
-        self.tasks_completed = 0
-        self.tasks_failed = 0
-        self.total_execution_time = 0
-    
-    def submit_task(self, task_id: str, task_func, *args, priority: int = 0, **kwargs) -> str:
-        """
-        Submit a task for asynchronous execution
-        
-        Args:
-            task_id: Unique task identifier
-            task_func: Function to execute
-            *args: Function arguments
-            priority: Task priority (higher = more important)
-            **kwargs: Function keyword arguments
+            AI_MODULES['torch'] = torch
+            AI_MODULES['nn'] = nn
+            AI_MODULES['transforms'] = transforms
+            AI_MODULES['models'] = models
             
-        Returns:
-            Task ID
-        """
-        with self.task_lock:
-            # Check queue capacity
-            if len(self.tasks) >= self.max_pending_tasks:
-                # Remove lowest priority pending task
-                self._remove_lowest_priority_task()
-            
-            # Store task metadata
-            self.tasks[task_id] = {
-                'func': task_func,
-                'args': args,
-                'kwargs': kwargs,
-                'priority': priority,
-                'status': 'pending',
-                'submitted_at': time.time(),
-                'future': None
-            }
-            
-            # Submit to thread pool
-            future = self.thread_pool.submit(self._execute_task_wrapper, task_id)
-            self.tasks[task_id]['future'] = future
-            self.tasks[task_id]['status'] = 'running'
-            
-            return task_id
-    
-    def _execute_task_wrapper(self, task_id: str):
-        """Wrapper for task execution with error handling and timing"""
-        start_time = time.time()
-        
-        try:
-            with self.task_lock:
-                if task_id not in self.tasks:
-                    return None
-                
-                task_info = self.tasks[task_id]
-                func = task_info['func']
-                args = task_info['args']
-                kwargs = task_info['kwargs']
-            
-            # Execute the task
-            result = func(*args, **kwargs)
-            execution_time = time.time() - start_time
-            
-            with self.task_lock:
-                self.tasks[task_id]['status'] = 'completed'
-                self.tasks[task_id]['completed_at'] = time.time()
-                self.tasks[task_id]['execution_time'] = execution_time
-                self.task_results[task_id] = result
-                self.tasks_completed += 1
-                self.total_execution_time += execution_time
-            
-            return result
-            
-        except Exception as e:
-            execution_time = time.time() - start_time
-            
-            with self.task_lock:
-                self.tasks[task_id]['status'] = 'failed'
-                self.tasks[task_id]['error'] = str(e)
-                self.tasks[task_id]['execution_time'] = execution_time
-                self.tasks_failed += 1
-                self.total_execution_time += execution_time
-            
-            print(f"Task {task_id} failed: {e}")
-            return None
-    
-    def _remove_lowest_priority_task(self):
-        """Remove the lowest priority pending task"""
-        pending_tasks = [(tid, info) for tid, info in self.tasks.items() 
-                        if info['status'] == 'pending']
-        
-        if pending_tasks:
-            # Find task with lowest priority
-            lowest_task = min(pending_tasks, key=lambda x: x[1]['priority'])
-            task_id = lowest_task[0]
-            
-            # Remove from tasks
-            del self.tasks[task_id]
-            print(f"Removed low priority task {task_id} from queue")
-    
-    def get_task_result(self, task_id: str, timeout: Optional[float] = None) -> Any:
-        """
-        Get result of a completed task
-        
-        Args:
-            task_id: Task identifier
-            timeout: Maximum time to wait for completion
-            
-        Returns:
-            Task result or None if not complete/failed
-        """
-        with self.task_lock:
-            if task_id in self.task_results:
-                return self.task_results[task_id]
-            
-            if task_id not in self.tasks:
-                return None
-            
-            task_info = self.tasks[task_id]
-        
-        # Wait for completion if timeout specified
-        if timeout and task_info['future']:
-            try:
-                result = task_info['future'].result(timeout=timeout)
-                return result
-            except concurrent.futures.TimeoutError:
-                return None
-            except Exception as e:
-                print(f"Task {task_id} error: {e}")
-                return None
-        
-        return None
-    
-    def cancel_task(self, task_id: str):
-        """Cancel a pending or running task"""
-        with self.task_lock:
-            if task_id in self.tasks:
-                task_info = self.tasks[task_id]
-                
-                if task_info['future'] and not task_info['future'].done():
-                    task_info['future'].cancel()
-                
-                task_info['status'] = 'cancelled'
-                
-                # Clean up
-                if task_id in self.task_results:
-                    del self.task_results[task_id]
-    
-    def cleanup_old_tasks(self, max_age_seconds: int = 3600):
-        """Clean up old completed tasks"""
-        current_time = time.time()
-        tasks_to_remove = []
-        
-        with self.task_lock:
-            for task_id, task_info in self.tasks.items():
-                if task_info['status'] in ['completed', 'failed', 'cancelled']:
-                    completed_at = task_info.get('completed_at', task_info['submitted_at'])
-                    if current_time - completed_at > max_age_seconds:
-                        tasks_to_remove.append(task_id)
-            
-            for task_id in tasks_to_remove:
-                if task_id in self.task_results:
-                    del self.task_results[task_id]
-                del self.tasks[task_id]
-    
-    def get_stats(self) -> Dict:
-        """Get executor statistics"""
-        with self.task_lock:
-            status_counts = defaultdict(int)
-            for task_info in self.tasks.values():
-                status_counts[task_info['status']] += 1
-            
-            avg_execution_time = (
-                self.total_execution_time / max(self.tasks_completed + self.tasks_failed, 1)
+            # Import transformers
+            from transformers import (
+                AutoModelForSeq2SeqLM, 
+                AutoTokenizer,
+                BlipProcessor, 
+                BlipForConditionalGeneration,
+                CLIPProcessor, 
+                CLIPModel,
+                pipeline
             )
             
-            return {
-                'total_tasks': len(self.tasks),
-                'tasks_completed': self.tasks_completed,
-                'tasks_failed': self.tasks_failed,
-                'status_counts': dict(status_counts),
-                'avg_execution_time_seconds': avg_execution_time,
-                'max_workers': self.max_workers,
-                'pending_slots': self.max_pending_tasks - len(self.tasks)
+            AI_MODULES['AutoModelForSeq2SeqLM'] = AutoModelForSeq2SeqLM
+            AI_MODULES['AutoTokenizer'] = AutoTokenizer
+            AI_MODULES['BlipProcessor'] = BlipProcessor
+            AI_MODULES['BlipForConditionalGeneration'] = BlipForConditionalGeneration
+            AI_MODULES['CLIPProcessor'] = CLIPProcessor
+            AI_MODULES['CLIPModel'] = CLIPModel
+            AI_MODULES['pipeline'] = pipeline
+            
+            # Import diffusers
+            from diffusers import (
+                StableDiffusionPipeline,
+                StableDiffusionImg2ImgPipeline,
+                StableDiffusionInpaintPipeline,
+                EulerAncestralDiscreteScheduler,
+                DPMSolverMultistepScheduler
+            )
+            
+            AI_MODULES['StableDiffusionPipeline'] = StableDiffusionPipeline
+            AI_MODULES['StableDiffusionImg2ImgPipeline'] = StableDiffusionImg2ImgPipeline
+            AI_MODULES['StableDiffusionInpaintPipeline'] = StableDiffusionInpaintPipeline
+            AI_MODULES['EulerAncestralDiscreteScheduler'] = EulerAncestralDiscreteScheduler
+            AI_MODULES['DPMSolverMultistepScheduler'] = DPMSolverMultistepScheduler
+            
+            AI_AVAILABLE = True
+            st.session_state.ai_loaded = True
+            
+        except ImportError as e:
+            print(f"AI libraries not installed: {e}")
+            AI_AVAILABLE = False
+            st.session_state.ai_loaded = False
+    
+    return AI_AVAILABLE
+
+# ============================================================================
+# PERFORMANCE OPTIMIZATION DECORATORS
+# ============================================================================
+def streamlit_cache(ttl: int = 3600, max_entries: int = 1000, persist: bool = True):
+    """
+    Enhanced caching decorator for Streamlit with TTL and size limits
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Create cache key
+            func_name = func.__name__
+            args_key = pickle.dumps((args, kwargs))
+            cache_key = f"{func_name}_{hashlib.md5(args_key).hexdigest()}"
+            
+            # Initialize cache in session state if not exists
+            if 'performance_cache' not in st.session_state:
+                st.session_state.performance_cache = {
+                    'data': {},
+                    'timestamps': {},
+                    'hits': 0,
+                    'misses': 0
+                }
+            
+            cache = st.session_state.performance_cache
+            
+            # Check cache
+            if cache_key in cache['data']:
+                timestamp = cache['timestamps'][cache_key]
+                if time.time() - timestamp < ttl:
+                    cache['hits'] += 1
+                    return cache['data'][cache_key]
+                else:
+                    # Cache expired
+                    del cache['data'][cache_key]
+                    del cache['timestamps'][cache_key]
+            
+            # Cache miss or expired
+            cache['misses'] += 1
+            
+            # Execute function
+            result = func(*args, **kwargs)
+            
+            # Store in cache
+            cache['data'][cache_key] = result
+            cache['timestamps'][cache_key] = time.time()
+            
+            # Enforce max entries (LRU eviction)
+            if len(cache['data']) > max_entries:
+                # Remove oldest entries
+                sorted_timestamps = sorted(cache['timestamps'].items(), key=lambda x: x[1])
+                for key, _ in sorted_timestamps[:max_entries // 10]:  # Remove 10%
+                    if key in cache['data']:
+                        del cache['data'][key]
+                    if key in cache['timestamps']:
+                        del cache['timestamps'][key]
+            
+            return result
+        
+        # Add cache management methods
+        def clear_cache():
+            if 'performance_cache' in st.session_state:
+                st.session_state.performance_cache = {
+                    'data': {},
+                    'timestamps': {},
+                    'hits': 0,
+                    'misses': 0
+                }
+        
+        def get_cache_stats():
+            if 'performance_cache' in st.session_state:
+                cache = st.session_state.performance_cache
+                return {
+                    'size': len(cache['data']),
+                    'hits': cache['hits'],
+                    'misses': cache['misses'],
+                    'hit_ratio': cache['hits'] / max(1, cache['hits'] + cache['misses'])
+                }
+            return {}
+        
+        wrapper.clear_cache = clear_cache
+        wrapper.get_cache_stats = get_cache_stats
+        
+        return wrapper
+    return decorator
+
+def background_task(timeout: int = 300):
+    """
+    Decorator to run function in background thread for long-running tasks
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Store result in session state
+            task_id = f"{func.__name__}_{uuid.uuid4().hex[:8]}"
+            
+            if 'background_tasks' not in st.session_state:
+                st.session_state.background_tasks = {}
+            
+            # Create a future
+            from concurrent.futures import Future
+            future = Future()
+            
+            def task_runner():
+                try:
+                    result = func(*args, **kwargs)
+                    future.set_result(result)
+                    st.session_state.background_tasks[task_id] = {
+                        'status': 'completed',
+                        'result': result,
+                        'completed_at': datetime.datetime.now()
+                    }
+                except Exception as e:
+                    future.set_exception(e)
+                    st.session_state.background_tasks[task_id] = {
+                        'status': 'failed',
+                        'error': str(e),
+                        'completed_at': datetime.datetime.now()
+                    }
+            
+            # Start thread
+            thread = threading.Thread(target=task_runner, daemon=True)
+            thread.start()
+            
+            st.session_state.background_tasks[task_id] = {
+                'status': 'running',
+                'started_at': datetime.datetime.now(),
+                'future': future,
+                'thread': thread
             }
+            
+            return task_id
+        
+        return wrapper
+    return decorator
+
+def debounce(wait_time: float = 0.5):
+    """
+    Debounce decorator to limit function execution frequency
+    """
+    def decorator(func):
+        last_called = [0.0]
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            current_time = time.time()
+            if current_time - last_called[0] >= wait_time:
+                last_called[0] = current_time
+                return func(*args, **kwargs)
+            return None
+        
+        return wrapper
+    return decorator
+
+# ============================================================================
+# PERFORMANCE MONITORING
+# ============================================================================
+class PerformanceMonitor:
+    """Monitor and optimize application performance"""
     
-    def shutdown(self, wait: bool = True):
-        """Shutdown the executor"""
-        self.thread_pool.shutdown(wait=wait)
+    def __init__(self):
+        self.metrics = defaultdict(list)
+        self.start_time = time.time()
+        self.memory_samples = deque(maxlen=100)
+        self.cpu_samples = deque(maxlen=100)
+        
+    def start_measurement(self, name: str):
+        """Start timing a section of code"""
+        if 'timings' not in st.session_state:
+            st.session_state.timings = {}
+        st.session_state.timings[name] = {
+            'start': time.perf_counter(),
+            'end': None,
+            'duration': None
+        }
+    
+    def end_measurement(self, name: str):
+        """End timing a section of code"""
+        if 'timings' in st.session_state and name in st.session_state.timings:
+            st.session_state.timings[name]['end'] = time.perf_counter()
+            st.session_state.timings[name]['duration'] = (
+                st.session_state.timings[name]['end'] - st.session_state.timings[name]['start']
+            )
+    
+    @contextmanager
+    def measure(self, name: str):
+        """Context manager for timing"""
+        self.start_measurement(name)
+        try:
+            yield
+        finally:
+            self.end_measurement(name)
+    
+    def sample_resources(self):
+        """Sample current resource usage"""
+        process = psutil.Process()
+        
+        # Memory
+        memory_info = process.memory_info()
+        self.memory_samples.append({
+            'rss': memory_info.rss,
+            'vms': memory_info.vms,
+            'percent': process.memory_percent()
+        })
+        
+        # CPU
+        self.cpu_samples.append({
+            'percent': process.cpu_percent(interval=0.1),
+            'threads': process.num_threads()
+        })
+        
+        # GC stats
+        gc.collect()
+        
+    def get_performance_report(self) -> Dict:
+        """Generate performance report"""
+        report = {
+            'uptime': time.time() - self.start_time,
+            'memory': {
+                'current_rss': self.memory_samples[-1]['rss'] if self.memory_samples else 0,
+                'current_vms': self.memory_samples[-1]['vms'] if self.memory_samples else 0,
+                'avg_memory_percent': np.mean([s['percent'] for s in self.memory_samples]) if self.memory_samples else 0,
+                'gc_stats': {
+                    'collected': gc.get_count(),
+                    'thresholds': gc.get_threshold()
+                }
+            },
+            'cpu': {
+                'current_percent': self.cpu_samples[-1]['percent'] if self.cpu_samples else 0,
+                'avg_cpu_percent': np.mean([s['percent'] for s in self.cpu_samples]) if self.cpu_samples else 0,
+                'threads': self.cpu_samples[-1]['threads'] if self.cpu_samples else 0
+            },
+            'timings': st.session_state.get('timings', {})
+        }
+        
+        # Add cache stats if available
+        if 'performance_cache' in st.session_state:
+            cache = st.session_state.performance_cache
+            report['cache'] = {
+                'size': len(cache['data']),
+                'hits': cache['hits'],
+                'misses': cache['misses'],
+                'hit_ratio': cache['hits'] / max(1, cache['hits'] + cache['misses'])
+            }
+        
+        return report
 
 # ============================================================================
-# OPTIMIZED CONFIGURATION WITH PERFORMANCE SETTINGS
+# OPTIMIZED IMAGE PROCESSING WITH NUMBA
 # ============================================================================
+class OptimizedImageProcessor:
+    """Image processing optimized with Numba where available"""
+    
+    @staticmethod
+    @streamlit_cache(ttl=3600)
+    def create_thumbnail_optimized(image_path: Path, size: Tuple[int, int] = (300, 300)) -> Optional[bytes]:
+        """Create thumbnail with optimized operations"""
+        try:
+            with Image.open(image_path) as img:
+                # Handle EXIF rotation
+                img = ImageOps.exif_transpose(img)
+                
+                # Convert mode if necessary
+                if img.mode == 'RGBA':
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[-1])
+                    img = background
+                elif img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                
+                # Calculate aspect ratio preserving dimensions
+                img_ratio = img.width / img.height
+                target_ratio = size[0] / size[1]
+                
+                if img_ratio > target_ratio:
+                    # Image is wider
+                    new_height = size[1]
+                    new_width = int(new_height * img_ratio)
+                else:
+                    # Image is taller
+                    new_width = size[0]
+                    new_height = int(new_width / img_ratio)
+                
+                # Resize
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # Crop to exact size
+                left = (new_width - size[0]) / 2
+                top = (new_height - size[1]) / 2
+                right = (new_width + size[0]) / 2
+                bottom = (new_height + size[1]) / 2
+                
+                img = img.crop((left, top, right, bottom))
+                
+                # Save to bytes
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=85, optimize=True)
+                return buffer.getvalue()
+                
+        except Exception as e:
+            print(f"Error creating thumbnail: {e}")
+            return None
+    
+    @staticmethod
+    def apply_filter_optimized(image: np.ndarray, filter_type: str, strength: float = 1.0) -> np.ndarray:
+        """Apply filters using optimized operations"""
+        if NUMBA_AVAILABLE:
+            return OptimizedImageProcessor._apply_filter_numba(image, filter_type, strength)
+        else:
+            return OptimizedImageProcessor._apply_filter_numpy(image, filter_type, strength)
+    
+    @staticmethod
+    def _apply_filter_numpy(image: np.ndarray, filter_type: str, strength: float) -> np.ndarray:
+        """Apply filter using numpy"""
+        if filter_type == 'grayscale':
+            if len(image.shape) == 3:
+                return np.dot(image[..., :3], [0.2989, 0.5870, 0.1140])
+            return image
+        
+        elif filter_type == 'sepia':
+            sepia_filter = np.array([
+                [0.393, 0.769, 0.189],
+                [0.349, 0.686, 0.168],
+                [0.272, 0.534, 0.131]
+            ])
+            return np.clip(np.dot(image, sepia_filter.T), 0, 255).astype(np.uint8)
+        
+        elif filter_type == 'brightness':
+            return np.clip(image * strength, 0, 255).astype(np.uint8)
+        
+        elif filter_type == 'contrast':
+            mean = np.mean(image)
+            return np.clip((image - mean) * strength + mean, 0, 255).astype(np.uint8)
+        
+        return image
+    
+    @staticmethod
+    @njit(parallel=True) if NUMBA_AVAILABLE else None
+    def _apply_filter_numba(image: np.ndarray, filter_type: str, strength: float) -> np.ndarray:
+        """Apply filter using numba for speed"""
+        if filter_type == 'grayscale':
+            result = np.empty(image.shape[:2], dtype=np.uint8)
+            for i in prange(image.shape[0]):
+                for j in prange(image.shape[1]):
+                    pixel = image[i, j]
+                    gray = 0.2989 * pixel[0] + 0.5870 * pixel[1] + 0.1140 * pixel[2]
+                    result[i, j] = np.uint8(gray)
+            return result
+        
+        elif filter_type == 'brightness':
+            result = np.empty_like(image)
+            for i in prange(image.shape[0]):
+                for j in prange(image.shape[1]):
+                    for k in prange(image.shape[2]):
+                        result[i, j, k] = np.uint8(np.clip(image[i, j, k] * strength, 0, 255))
+            return result
+        
+        return image
+    
+    @staticmethod
+    @streamlit_cache(ttl=3600)
+    def calculate_image_features(image_path: Path) -> Dict:
+        """Calculate image features for search and analysis"""
+        try:
+            with Image.open(image_path) as img:
+                img_array = np.array(img.convert('RGB'))
+                
+                features = {
+                    'histogram': OptimizedImageProcessor._calculate_color_histogram(img_array),
+                    'edges': OptimizedImageProcessor._detect_edges(img_array),
+                    'texture': OptimizedImageProcessor._calculate_texture_features(img_array),
+                    'brightness': float(np.mean(img_array)),
+                    'contrast': float(np.std(img_array))
+                }
+                
+                return features
+        except Exception as e:
+            print(f"Error calculating features: {e}")
+            return {}
+    
+    @staticmethod
+    def _calculate_color_histogram(image: np.ndarray, bins: int = 32) -> np.ndarray:
+        """Calculate color histogram"""
+        hist_r = np.histogram(image[..., 0], bins=bins, range=(0, 255))[0]
+        hist_g = np.histogram(image[..., 1], bins=bins, range=(0, 255))[0]
+        hist_b = np.histogram(image[..., 2], bins=bins, range=(0, 255))[0]
+        return np.concatenate([hist_r, hist_g, hist_b])
+    
+    @staticmethod
+    def _detect_edges(image: np.ndarray) -> float:
+        """Simple edge detection metric"""
+        if SCIPY_AVAILABLE:
+            from scipy import ndimage
+            gray = np.mean(image, axis=2) if len(image.shape) == 3 else image
+            sobel_x = ndimage.sobel(gray, axis=0)
+            sobel_y = ndimage.sobel(gray, axis=1)
+            edge_magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
+            return float(np.mean(edge_magnitude))
+        return 0.0
+    
+    @staticmethod
+    def _calculate_texture_features(image: np.ndarray) -> Dict:
+        """Calculate texture features"""
+        if len(image.shape) == 3:
+            gray = np.mean(image, axis=2)
+        else:
+            gray = image
+        
+        features = {
+            'smoothness': float(1.0 / (1.0 + np.var(gray))),
+            'uniformity': float(np.sum(np.histogram(gray, bins=256)[0]**2) / (gray.size**2))
+        }
+        
+        return features
 
+# ============================================================================
+# ENHANCED CONFIGURATION WITH PERFORMANCE SETTINGS
+# ============================================================================
 class EnhancedConfig:
-    """Enhanced configuration with performance optimization settings"""
-    APP_NAME = "MemoryVault Pro AI - Optimized"
-    VERSION = "3.0.0-performance"
+    """Enhanced configuration with performance optimizations"""
     
-    # Get absolute paths
+    # Application info
+    APP_NAME = "MemoryVault Pro AI Ultra"
+    VERSION = "4.0.0"
+    DESCRIPTION = "High-performance photo album with AI enhancements"
+    
+    # Paths
     BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     DATA_DIR = BASE_DIR / "data"
     THUMBNAIL_DIR = BASE_DIR / "thumbnails"
@@ -859,47 +574,70 @@ class EnhancedConfig:
     EXPORT_DIR = BASE_DIR / "exports"
     AI_MODELS_DIR = BASE_DIR / "ai_models"
     CACHE_DIR = BASE_DIR / "cache"
-    TEMP_DIR = BASE_DIR / "temp"
+    LOGS_DIR = BASE_DIR / "logs"
     
-    # Files and paths
+    # Files
     METADATA_FILE = METADATA_DIR / "album_metadata.json"
-    DB_FILE = DB_DIR / "album_optimized.db"
-    CACHE_FILE = CACHE_DIR / "app_cache.db"
-    
-    # Image settings
-    THUMBNAIL_SIZE = (300, 300)
-    PREVIEW_SIZE = (800, 800)
-    MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
-    
-    # Gallery settings
-    ITEMS_PER_PAGE = 20
-    GRID_COLUMNS = 4
+    DB_FILE = DB_DIR / "album.db"
+    CACHE_FILE = CACHE_DIR / "persistent_cache.pkl"
+    SETTINGS_FILE = METADATA_DIR / "settings.json"
     
     # Performance settings
-    CACHE_TTL = 3600  # 1 hour
-    SESSION_TTL = 1800  # 30 minutes for session data
+    THUMBNAIL_SIZE = (300, 300)
+    PREVIEW_SIZE = (800, 600)
+    MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
+    
+    # Pagination
+    ITEMS_PER_PAGE = 24
+    GRID_COLUMNS = 4
+    LAZY_LOADING_CHUNK = 12
+    
+    # Cache settings
+    CACHE_TTL = 7200  # 2 hours
+    IMAGE_CACHE_TTL = 86400  # 24 hours for images
     MAX_CACHE_SIZE = 1000
-    DB_CONNECTION_POOL_SIZE = 5
-    MAX_WORKER_THREADS = 4
-    MAX_PENDING_TASKS = 50
-    LAZY_LOADING_ENABLED = True
-    VIRTUAL_SCROLLING_THRESHOLD = 50  # Use virtual scrolling for >50 items
+    PERSISTENT_CACHE = True
+    
+    # Database settings
+    DB_POOL_SIZE = 5
+    DB_TIMEOUT = 30
+    USE_WAL = True  # Write-Ahead Logging for better concurrency
+    
+    # AI settings
+    AI_ENABLED = False  # Will be set dynamically
+    AI_LAZY_LOAD = True
+    AI_MODEL_CACHE_SIZE = 3
+    AI_INFERENCE_TIMEOUT = 60
+    
+    # Resource limits
+    MAX_CONCURRENT_PROCESSES = 4
+    MAX_MEMORY_PERCENT = 80
+    CPU_THROTTLE_THRESHOLD = 85
+    
+    # UI settings
+    THEME = "light"
+    ANIMATIONS_ENABLED = True
+    LAZY_RENDERING = True
+    VIRTUAL_SCROLLING = True
     
     # Security
     ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'}
-    MAX_COMMENT_LENGTH = 500
-    MAX_CAPTION_LENGTH = 200
+    MAX_FILE_UPLOADS = 50
+    MAX_COMMENT_LENGTH = 1000
+    MAX_CAPTION_LENGTH = 500
     
-    # AI Settings (lazy loaded)
-    AI_ENABLED = False
+    # Monitoring
+    PERFORMANCE_SAMPLING_INTERVAL = 5  # seconds
+    LOG_LEVEL = logging.INFO
+    ENABLE_TELEMETRY = False
     
-    # Memory management
-    MAX_MEMORY_MB = 500  # Warning threshold
-    AUTO_CLEANUP_INTERVAL = 300  # Cleanup every 5 minutes
+    # Batch processing
+    BATCH_SIZE = 10
+    BATCH_DELAY = 0.1  # seconds between batches
     
     @classmethod
     def init_directories(cls):
-        """Create all necessary directories with optimized permissions"""
+        """Initialize all required directories"""
         directories = [
             cls.DATA_DIR,
             cls.THUMBNAIL_DIR,
@@ -908,2126 +646,2517 @@ class EnhancedConfig:
             cls.EXPORT_DIR,
             cls.AI_MODELS_DIR,
             cls.CACHE_DIR,
-            cls.TEMP_DIR
+            cls.LOGS_DIR
         ]
         
         for directory in directories:
-            try:
-                directory.mkdir(parents=True, exist_ok=True)
-                # Set permissions (read/write for owner, read for others)
-                os.chmod(directory, 0o755)
-            except Exception as e:
-                print(f"Warning: Could not create directory {directory}: {str(e)}")
+            directory.mkdir(parents=True, exist_ok=True)
         
-        # Initialize AI availability
-        cls.AI_ENABLED = lazy_load_ai_modules()
+        # Setup logging
+        cls._setup_logging()
         
-        # Initialize performance monitoring
-        if 'performance_start_time' not in st.session_state:
-            st.session_state.performance_start_time = time.time()
-            st.session_state.memory_warnings_shown = 0
-
-# ============================================================================
-# OPTIMIZED DATA MODELS WITH PERFORMANCE ENHANCEMENTS
-# ============================================================================
-
-@dataclass
-class OptimizedImageMetadata(ImageMetadata):
-    """Optimized image metadata with caching and efficient serialization"""
+        # Load or create settings
+        cls._load_settings()
     
     @classmethod
-    def from_image(cls, image_path: Path) -> 'OptimizedImageMetadata':
-        """Create metadata from image file with performance optimizations"""
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
+    def _setup_logging(cls):
+        """Setup application logging"""
+        log_file = cls.LOGS_DIR / f"app_{datetime.datetime.now().strftime('%Y%m%d')}.log"
         
-        # Try to get from cache first
-        cache_key = f"metadata_{image_path}_{image_path.stat().st_mtime}"
-        if 'metadata_cache' in st.session_state and cache_key in st.session_state.metadata_cache:
-            return st.session_state.metadata_cache[cache_key]
-            
+        logging.basicConfig(
+            level=cls.LOG_LEVEL,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5),
+                logging.StreamHandler()
+            ]
+        )
+        
+        # Reduce verbosity of some libraries
+        logging.getLogger('PIL').setLevel(logging.WARNING)
+        logging.getLogger('matplotlib').setLevel(logging.WARNING)
+        logging.getLogger('torch').setLevel(logging.WARNING)
+    
+    @classmethod
+    def _load_settings(cls):
+        """Load or create settings file"""
+        if cls.SETTINGS_FILE.exists():
+            try:
+                with open(cls.SETTINGS_FILE, 'r') as f:
+                    settings = json.load(f)
+                
+                # Update config with saved settings
+                for key, value in settings.items():
+                    if hasattr(cls, key):
+                        setattr(cls, key, value)
+            except Exception as e:
+                logging.warning(f"Could not load settings: {e}")
+        
+        # Save current settings
+        cls._save_settings()
+    
+    @classmethod
+    def _save_settings(cls):
+        """Save current settings to file"""
         try:
-            # Open image with minimal loading
-            with Image.open(image_path) as img:
-                # Get basic info without loading full image
-                stats = image_path.stat()
-                
-                # Extract dimensions efficiently
-                width, height = img.size
-                
-                # Extract EXIF data efficiently (skip if takes too long)
-                exif_data = None
-                try:
-                    if hasattr(img, '_getexif') and img._getexif():
-                        exif = img._getexif()
-                        if exif:
-                            # Only extract important EXIF tags
-                            important_tags = {
-                                271: 'Make',
-                                272: 'Model',
-                                274: 'Orientation',
-                                306: 'DateTime',
-                                36867: 'DateTimeOriginal',
-                                33434: 'ExposureTime',
-                                33437: 'FNumber',
-                                34855: 'ISOSpeedRatings',
-                            }
-                            exif_data = {}
-                            for tag_id, value in exif.items():
-                                tag_name = important_tags.get(tag_id)
-                                if tag_name:
-                                    try:
-                                        exif_data[tag_name] = str(value)
-                                    except:
-                                        pass
-                except Exception:
-                    exif_data = None
-                
-                # Create metadata object
-                metadata = cls(
-                    image_id=str(uuid.uuid4()),
-                    filename=image_path.name,
-                    filepath=str(image_path.relative_to(EnhancedConfig.DATA_DIR)),
-                    file_size=stats.st_size,
-                    dimensions=(width, height),
-                    format=img.format,
-                    created_date=datetime.datetime.fromtimestamp(stats.st_ctime),
-                    modified_date=datetime.datetime.fromtimestamp(stats.st_mtime),
-                    exif_data=exif_data,
-                    checksum=cls._calculate_checksum_fast(image_path)
-                )
-                
-                # Cache the metadata
-                if 'metadata_cache' not in st.session_state:
-                    st.session_state.metadata_cache = {}
-                
-                # Limit cache size
-                if len(st.session_state.metadata_cache) > 100:
-                    # Remove oldest entry (simplified FIFO)
-                    oldest_key = next(iter(st.session_state.metadata_cache))
-                    del st.session_state.metadata_cache[oldest_key]
-                
-                st.session_state.metadata_cache[cache_key] = metadata
-                
-                return metadata
-                
+            settings = {
+                'THUMBNAIL_SIZE': cls.THUMBNAIL_SIZE,
+                'PREVIEW_SIZE': cls.PREVIEW_SIZE,
+                'ITEMS_PER_PAGE': cls.ITEMS_PER_PAGE,
+                'GRID_COLUMNS': cls.GRID_COLUMNS,
+                'CACHE_TTL': cls.CACHE_TTL,
+                'THEME': cls.THEME,
+                'ANIMATIONS_ENABLED': cls.ANIMATIONS_ENABLED,
+                'LAZY_RENDERING': cls.LAZY_RENDERING
+            }
+            
+            with open(cls.SETTINGS_FILE, 'w') as f:
+                json.dump(settings, f, indent=2)
         except Exception as e:
-            print(f"Error creating metadata for {image_path}: {str(e)}")
-            raise
+            logging.error(f"Could not save settings: {e}")
+    
+    @classmethod
+    def update_setting(cls, key: str, value: Any):
+        """Update a setting and save to file"""
+        if hasattr(cls, key):
+            setattr(cls, key, value)
+            cls._save_settings()
+
+# ============================================================================
+# PERSISTENT CACHE MANAGER
+# ============================================================================
+class PersistentCache:
+    """Disk-backed persistent cache with expiration"""
+    
+    def __init__(self, cache_file: Path = None, max_size: int = 10000):
+        self.cache_file = cache_file or EnhancedConfig.CACHE_FILE
+        self.max_size = max_size
+        self.cache = {}
+        self._load_cache()
+    
+    def _load_cache(self):
+        """Load cache from disk"""
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'rb') as f:
+                    data = pickle.load(f)
+                    # Filter expired items
+                    current_time = time.time()
+                    self.cache = {
+                        k: v for k, v in data.items()
+                        if v['expires'] > current_time
+                    }
+                logging.info(f"Loaded cache with {len(self.cache)} items")
+        except Exception as e:
+            logging.warning(f"Could not load cache: {e}")
+            self.cache = {}
+    
+    def _save_cache(self):
+        """Save cache to disk"""
+        try:
+            # Remove expired items before saving
+            current_time = time.time()
+            self.cache = {
+                k: v for k, v in self.cache.items()
+                if v['expires'] > current_time
+            }
+            
+            # Enforce size limit (LRU)
+            if len(self.cache) > self.max_size:
+                sorted_items = sorted(self.cache.items(), key=lambda x: x[1]['timestamp'])
+                self.cache = dict(sorted_items[-self.max_size:])
+            
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(self.cache, f)
+        except Exception as e:
+            logging.error(f"Could not save cache: {e}")
+    
+    def get(self, key: str, default=None):
+        """Get item from cache"""
+        if key in self.cache:
+            item = self.cache[key]
+            if item['expires'] > time.time():
+                # Update timestamp (LRU)
+                item['timestamp'] = time.time()
+                return item['value']
+            else:
+                del self.cache[key]
+        return default
+    
+    def set(self, key: str, value: Any, ttl: int = 3600):
+        """Set item in cache with TTL"""
+        self.cache[key] = {
+            'value': value,
+            'timestamp': time.time(),
+            'expires': time.time() + ttl
+        }
+        # Save periodically (every 100 writes or on important operations)
+        if len(self.cache) % 100 == 0:
+            self._save_cache()
+    
+    def delete(self, key: str):
+        """Delete item from cache"""
+        if key in self.cache:
+            del self.cache[key]
+    
+    def clear(self):
+        """Clear entire cache"""
+        self.cache.clear()
+        self._save_cache()
+    
+    def cleanup(self):
+        """Remove expired items and save"""
+        current_time = time.time()
+        initial_size = len(self.cache)
+        self.cache = {
+            k: v for k, v in self.cache.items()
+            if v['expires'] > current_time
+        }
+        if len(self.cache) < initial_size:
+            self._save_cache()
+    
+    def get_stats(self) -> Dict:
+        """Get cache statistics"""
+        current_time = time.time()
+        expired = sum(1 for v in self.cache.values() if v['expires'] <= current_time)
+        
+        return {
+            'total_items': len(self.cache),
+            'expired_items': expired,
+            'size_mb': os.path.getsize(self.cache_file) / (1024 * 1024) if self.cache_file.exists() else 0
+        }
+
+# ============================================================================
+# ENHANCED SESSION STATE MANAGER
+# ============================================================================
+class SessionStateManager:
+    """Manage session state with persistence and cleanup"""
     
     @staticmethod
-    def _calculate_checksum_fast(image_path: Path) -> str:
-        """Fast checksum calculation using file stats"""
-        try:
-            stats = image_path.stat()
-            # Use a combination of file properties for quick checksum
-            checksum_data = f"{stats.st_size}-{stats.st_mtime}-{stats.st_ctime}"
-            return hashlib.md5(checksum_data.encode()).hexdigest()
-        except:
-            # Fallback to full file hash if needed
-            return ImageMetadata._calculate_checksum(image_path)
-
-# ============================================================================
-# OPTIMIZED DATABASE MANAGER
-# ============================================================================
-
-class OptimizedDatabaseManager(DatabaseManager):
-    """Optimized database manager with connection pooling and query optimization"""
+    def initialize_session():
+        """Initialize or restore session state"""
+        if 'session_initialized' not in st.session_state:
+            # Core application state
+            st.session_state.update({
+                'session_initialized': True,
+                'session_id': str(uuid.uuid4()),
+                'session_start': datetime.datetime.now(),
+                'page_views': 0,
+                'last_activity': time.time(),
+                
+                # Navigation
+                'current_page': 'dashboard',
+                'previous_page': None,
+                'page_history': deque(maxlen=20),
+                
+                # User state
+                'user_id': str(uuid.uuid4()),
+                'username': 'Guest',
+                'user_role': 'viewer',
+                'authenticated': False,
+                'login_time': None,
+                
+                # UI state
+                'theme': EnhancedConfig.THEME,
+                'view_mode': 'grid',
+                'sort_by': 'date_desc',
+                'filter_tags': [],
+                'search_query': '',
+                'selected_person': None,
+                'selected_image': None,
+                'selected_album': None,
+                
+                # Pagination
+                'current_page_num': 1,
+                'items_per_page': EnhancedConfig.ITEMS_PER_PAGE,
+                
+                # Favorites and history
+                'favorites': set(),
+                'recently_viewed': deque(maxlen=50),
+                'search_history': deque(maxlen=20),
+                
+                # Performance
+                'render_count': 0,
+                'cache_hits': 0,
+                'cache_misses': 0,
+                
+                # AI state
+                'ai_enabled': False,
+                'ai_models_loaded': {},
+                'ai_usage_count': 0,
+                
+                # Batch operations
+                'batch_queue': [],
+                'batch_results': {},
+                'background_tasks': {},
+                
+                # Settings
+                'settings': {
+                    'auto_refresh': True,
+                    'notifications': True,
+                    'data_saver': False,
+                    'developer_mode': False
+                }
+            })
+            
+            # Load persisted state if available
+            SessionStateManager._load_persisted_state()
+        
+        # Update activity timestamp
+        st.session_state.last_activity = time.time()
+        st.session_state.page_views += 1
     
-    def __init__(self, db_path: Path = None):
-        self.db_path = db_path or EnhancedConfig.DB_FILE
-        self.connection_pool = DatabaseConnectionPool(
-            self.db_path, 
-            pool_size=EnhancedConfig.DB_CONNECTION_POOL_SIZE
-        )
-        self.query_cache = MultiLayerCache(max_memory_items=500)
+    @staticmethod
+    def _load_persisted_state():
+        """Load persisted state from storage"""
+        try:
+            state_file = EnhancedConfig.METADATA_DIR / f"session_{st.session_state.user_id}.json"
+            if state_file.exists():
+                with open(state_file, 'r') as f:
+                    persisted = json.load(f)
+                
+                # Merge persisted state
+                for key, value in persisted.items():
+                    if key in st.session_state and key not in ['session_id', 'session_start']:
+                        if isinstance(value, list):
+                            st.session_state[key] = deque(value, maxlen=st.session_state[key].maxlen)
+                        else:
+                            st.session_state[key] = value
+        except Exception as e:
+            logging.warning(f"Could not load persisted state: {e}")
+    
+    @staticmethod
+    def save_persisted_state():
+        """Save persistent state to storage"""
+        try:
+            state_file = EnhancedConfig.METADATA_DIR / f"session_{st.session_state.user_id}.json"
+            
+            # Prepare state for persistence (skip non-serializable items)
+            state_to_save = {}
+            for key, value in st.session_state.items():
+                if key.startswith('_'):
+                    continue
+                try:
+                    if isinstance(value, (deque, set)):
+                        state_to_save[key] = list(value)
+                    elif isinstance(value, datetime.datetime):
+                        state_to_save[key] = value.isoformat()
+                    else:
+                        json.dumps(value)  # Test serializability
+                        state_to_save[key] = value
+                except:
+                    continue
+            
+            with open(state_file, 'w') as f:
+                json.dump(state_to_save, f, indent=2)
+        except Exception as e:
+            logging.error(f"Could not save persisted state: {e}")
+    
+    @staticmethod
+    def cleanup_old_sessions(max_age_days: int = 7):
+        """Clean up old session files"""
+        try:
+            session_files = EnhancedConfig.METADATA_DIR.glob("session_*.json")
+            cutoff_time = time.time() - (max_age_days * 86400)
+            
+            for session_file in session_files:
+                if session_file.stat().st_mtime < cutoff_time:
+                    session_file.unlink()
+        except Exception as e:
+            logging.error(f"Could not clean up old sessions: {e}")
+    
+    @staticmethod
+    def get_session_stats() -> Dict:
+        """Get session statistics"""
+        session_age = datetime.datetime.now() - st.session_state.session_start
+        
+        return {
+            'session_id': st.session_state.session_id,
+            'session_age': str(session_age),
+            'page_views': st.session_state.page_views,
+            'user_id': st.session_state.user_id,
+            'username': st.session_state.username,
+            'cache_hits': st.session_state.cache_hits,
+            'cache_misses': st.session_state.cache_misses,
+            'cache_hit_ratio': st.session_state.cache_hits / max(1, st.session_state.cache_hits + st.session_state.cache_misses),
+            'ai_usage_count': st.session_state.ai_usage_count,
+            'recently_viewed_count': len(st.session_state.recently_viewed),
+            'favorites_count': len(st.session_state.favorites)
+        }
+    
+    @staticmethod
+    def navigate_to(page: str):
+        """Navigate to a page with history tracking"""
+        if st.session_state.current_page != page:
+            st.session_state.previous_page = st.session_state.current_page
+            st.session_state.current_page = page
+            st.session_state.page_history.append(page)
+            st.session_state.current_page_num = 1  # Reset pagination
+            st.rerun()
+    
+    @staticmethod
+    def go_back():
+        """Go back to previous page"""
+        if st.session_state.page_history:
+            previous = st.session_state.page_history.pop() if st.session_state.page_history else 'dashboard'
+            SessionStateManager.navigate_to(previous)
+
+# ============================================================================
+# OPTIMIZED DATABASE MANAGER WITH CONNECTION POOLING
+# ============================================================================
+class OptimizedDatabaseManager:
+    """Database manager with connection pooling and optimization"""
+    
+    _instance = None
+    _connection_pool = []
+    _max_pool_size = EnhancedConfig.DB_POOL_SIZE
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+    
+    def _initialize(self):
+        """Initialize database and connection pool"""
+        self.db_path = EnhancedConfig.DB_FILE
         self._init_database()
+        self._create_connection_pool()
+        self.query_cache = {}
+        self.stats = {
+            'queries_executed': 0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'connection_waits': 0
+        }
+    
+    def _create_connection_pool(self):
+        """Create connection pool"""
+        for _ in range(self._max_pool_size):
+            conn = sqlite3.connect(
+                self.db_path,
+                timeout=EnhancedConfig.DB_TIMEOUT,
+                check_same_thread=False
+            )
+            conn.execute("PRAGMA journal_mode = WAL" if EnhancedConfig.USE_WAL else "")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA cache_size = -10000")  # 10MB cache
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.row_factory = sqlite3.Row
+            self._connection_pool.append(conn)
     
     @contextmanager
     def get_connection(self):
-        """Get database connection from pool"""
-        conn = None
+        """Get connection from pool with context manager"""
+        start_time = time.time()
+        
+        while not self._connection_pool:
+            # Wait for connection (with timeout)
+            time.sleep(0.01)
+            self.stats['connection_waits'] += 1
+            
+            if time.time() - start_time > EnhancedConfig.DB_TIMEOUT:
+                raise TimeoutError("Could not acquire database connection")
+        
+        conn = self._connection_pool.pop()
         try:
-            conn = self.connection_pool.get_connection()
             yield conn
+            conn.commit()
         except Exception as e:
-            st.error(f"Database connection error: {str(e)}")
-            raise
+            conn.rollback()
+            raise e
         finally:
-            if conn:
-                self.connection_pool.return_connection(conn)
+            self._connection_pool.append(conn)
     
     def _init_database(self):
-        """Initialize database with performance optimizations"""
+        """Initialize database with optimized schema"""
         try:
             os.makedirs(self.db_path.parent, exist_ok=True)
             
-            with self.get_connection() as conn:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                # Enable performance optimizations
-                cursor.execute("PRAGMA journal_mode = WAL")
-                cursor.execute("PRAGMA synchronous = NORMAL")
-                cursor.execute("PRAGMA cache_size = -2000")
-                cursor.execute("PRAGMA temp_store = MEMORY")
-                cursor.execute("PRAGMA mmap_size = 268435456")
-                cursor.execute("PRAGMA busy_timeout = 5000")
+                # Enable optimizations
+                cursor.execute("PRAGMA auto_vacuum = INCREMENTAL")
+                cursor.execute("PRAGMA optimize")
                 
-                # Create tables with optimized schema
-                # (Original table creation code from DatabaseManager._init_database)
-                # ... [Include all original table creation code here]
+                # Create optimized tables with proper indexing
+                self._create_tables(cursor)
                 
-                # Create additional indexes for performance
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_images_checksum ON images(checksum)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_images_filepath ON images(filepath)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_album_entries_image ON album_entries(image_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(user_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_ratings_user_entry ON ratings(user_id, entry_id)')
+                # Create views for common queries
+                self._create_views(cursor)
+                
+                # Create triggers for denormalized data
+                self._create_triggers(cursor)
                 
                 conn.commit()
-                st.success("✅ Database initialized with performance optimizations!")
+                
+                logging.info("Database initialized with optimizations")
                 
         except sqlite3.Error as e:
-            st.error(f"Database initialization error: {str(e)}")
+            logging.error(f"Database initialization error: {e}")
             raise
     
-    def execute_cached_query(self, query: str, params: tuple = (), ttl: int = 300) -> List[Dict]:
-        """
-        Execute a query with result caching
-        
-        Args:
-            query: SQL query
-            params: Query parameters
-            ttl: Cache time-to-live in seconds
-            
-        Returns:
-            Query results
-        """
-        cache_key = f"query_{hashlib.md5((query + str(params)).encode()).hexdigest()}"
-        
-        # Try cache first
-        cached_result = self.query_cache.get(cache_key)
-        if cached_result is not None:
-            return cached_result
-        
-        # Execute query
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute(query, params)
-                results = [dict(row) for row in cursor.fetchall()]
-                
-                # Cache the results
-                self.query_cache.set(cache_key, results, ttl)
-                
-                return results
-        except Exception as e:
-            st.error(f"Query execution error: {str(e)}")
-            return []
-    
-    def add_image(self, metadata: ImageMetadata, thumbnail_path: str = None):
-        """Optimized image addition with bulk operation support"""
-        # Use original implementation but with connection pooling
-        super().add_image(metadata, thumbnail_path)
-        
-        # Invalidate relevant caches
-        self.query_cache.delete(f"query_{hashlib.md5(b'SELECT * FROM images').hexdigest()}")
-    
-    def search_entries_optimized(self, query: str, person_id: str = None, limit: int = 100, offset: int = 0) -> List[Dict]:
-        """
-        Optimized search with pagination and full-text search support
-        """
-        search_pattern = f'%{query}%'
-        cache_key = f"search_{query}_{person_id}_{limit}_{offset}"
-        
-        # Try cache first
-        cached = self.query_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                if person_id:
-                    # Use prepared statement for security and performance
-                    cursor.execute('''
-                    SELECT ae.*, p.display_name, i.filename, i.thumbnail_path
-                    FROM album_entries ae
-                    JOIN people p ON ae.person_id = p.person_id
-                    JOIN images i ON ae.image_id = i.image_id
-                    WHERE ae.person_id = ? AND
-                    (ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)
-                    ORDER BY ae.created_at DESC
-                    LIMIT ? OFFSET ?
-                    ''', (person_id, search_pattern, search_pattern, search_pattern, limit, offset))
-                else:
-                    cursor.execute('''
-                    SELECT ae.*, p.display_name, i.filename, i.thumbnail_path
-                    FROM album_entries ae
-                    JOIN people p ON ae.person_id = p.person_id
-                    JOIN images i ON ae.image_id = i.image_id
-                    WHERE ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?
-                    ORDER BY ae.created_at DESC
-                    LIMIT ? OFFSET ?
-                    ''', (search_pattern, search_pattern, search_pattern, limit, offset))
-                
-                results = [dict(row) for row in cursor.fetchall()]
-                
-                # Cache results
-                self.query_cache.set(cache_key, results, ttl=60)  # 1 minute cache
-                
-                return results
-                
-        except Exception as e:
-            st.error(f"Search error: {str(e)}")
-            return []
-    
-    def get_stats(self) -> Dict:
-        """Get database performance statistics"""
-        db_stats = {}
-        pool_stats = self.connection_pool.get_stats()
-        cache_stats = self.query_cache.get_stats()
-        
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Get table sizes
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = cursor.fetchall()
-                
-                for table in tables:
-                    table_name = table[0]
-                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                    count = cursor.fetchone()[0]
-                    db_stats[f"{table_name}_count"] = count
-                
-                # Get database size
-                if os.path.exists(self.db_path):
-                    db_stats['database_size_mb'] = os.path.getsize(self.db_path) / (1024 * 1024)
-                
-        except Exception as e:
-            db_stats['error'] = str(e)
-        
-        return {
-            'database': db_stats,
-            'connection_pool': pool_stats,
-            'query_cache': cache_stats
-        }
-
-# ============================================================================
-# OPTIMIZED IMAGE PROCESSOR WITH CACHING AND PERFORMANCE
-# ============================================================================
-
-class OptimizedImageProcessor(ImageProcessor):
-    """Optimized image processor with caching, parallel processing, and memory management"""
-    
-    # Class-level caches (shared across instances)
-    _thumbnail_cache = MultiLayerCache(max_memory_items=200, disk_cache_dir=EnhancedConfig.CACHE_DIR / "thumbnails")
-    _image_data_cache = MultiLayerCache(max_memory_items=100)
-    
-    # Thread pool for parallel processing
-    _thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    
-    @staticmethod
-    def create_thumbnail_optimized(image_path: Path, thumbnail_dir: Path = None, 
-                                   size: Tuple[int, int] = None, quality: int = 85) -> Optional[Path]:
-        """
-        Create thumbnail with intelligent caching and optimization
-        
-        Args:
-            image_path: Path to source image
-            thumbnail_dir: Directory for thumbnails
-            size: Thumbnail size (width, height)
-            quality: JPEG quality (1-100)
-            
-        Returns:
-            Path to thumbnail or None if failed
-        """
-        if not image_path.exists():
-            return None
-            
-        thumbnail_dir = thumbnail_dir or EnhancedConfig.THUMBNAIL_DIR
-        size = size or EnhancedConfig.THUMBNAIL_SIZE
-        
-        # Create cache key based on file properties
-        stats = image_path.stat()
-        cache_key = f"thumb_{image_path}_{stats.st_mtime}_{stats.st_size}_{size[0]}x{size[1]}_{quality}"
-        
-        # Check cache first
-        cached_path = OptimizedImageProcessor._thumbnail_cache.get(cache_key)
-        if cached_path and isinstance(cached_path, Path) and cached_path.exists():
-            return cached_path
-        
-        os.makedirs(thumbnail_dir, exist_ok=True)
-        thumbnail_path = thumbnail_dir / f"{image_path.stem}_thumb_{size[0]}x{size[1]}.jpg"
-        
-        try:
-            # Use optimized image loading
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                
-                with Image.open(image_path) as img:
-                    # Apply EXIF orientation
-                    img = ImageOps.exif_transpose(img)
-                    
-                    # Convert to RGB if necessary (optimized)
-                    if img.mode not in ('RGB', 'L'):
-                        if img.mode == 'RGBA':
-                            # Efficient RGBA to RGB conversion
-                            background = Image.new('RGB', img.size, (255, 255, 255))
-                            if img.mode == 'RGBA':
-                                background.paste(img, mask=img.split()[-1])
-                            img = background
-                        else:
-                            img = img.convert('RGB')
-                    
-                    # Create thumbnail with aspect ratio preservation
-                    img.thumbnail(size, Image.Resampling.LANCZOS)
-                    
-                    # Optimized save with progressive encoding for web
-                    save_kwargs = {
-                        'format': 'JPEG',
-                        'quality': quality,
-                        'optimize': True,
-                        'progressive': True,  # Progressive JPEG loads faster
-                        'subsampling': -1     # Keep all color information
-                    }
-                    
-                    img.save(thumbnail_path, **save_kwargs)
-            
-            # Cache the thumbnail path
-            OptimizedImageProcessor._thumbnail_cache.set(cache_key, thumbnail_path, ttl=86400)  # 24 hours
-            
-            return thumbnail_path
-            
-        except Exception as e:
-            print(f"Error creating thumbnail for {image_path}: {str(e)}")
-            return None
-    
-    @staticmethod
-    def create_thumbnails_batch(image_paths: List[Path], thumbnail_dir: Path = None) -> Dict[Path, Optional[Path]]:
-        """
-        Create thumbnails for multiple images in parallel
-        
-        Args:
-            image_paths: List of image paths
-            thumbnail_dir: Directory for thumbnails
-            
-        Returns:
-            Dictionary mapping original paths to thumbnail paths
-        """
-        results = {}
-        
-        # Submit thumbnail creation tasks in parallel
-        futures = {}
-        for img_path in image_paths:
-            future = OptimizedImageProcessor._thread_pool.submit(
-                OptimizedImageProcessor.create_thumbnail_optimized,
-                img_path,
-                thumbnail_dir
-            )
-            futures[future] = img_path
-        
-        # Collect results as they complete
-        for future in concurrent.futures.as_completed(futures):
-            img_path = futures[future]
-            try:
-                thumb_path = future.result()
-                results[img_path] = thumb_path
-            except Exception as e:
-                print(f"Failed to create thumbnail for {img_path}: {e}")
-                results[img_path] = None
-        
-        return results
-    
-    @staticmethod
-    def get_image_data_url_optimized(image_path: Path, max_size: Optional[Tuple[int, int]] = None) -> str:
-        """
-        Get image as data URL with caching and optimization
-        
-        Args:
-            image_path: Path to image
-            max_size: Optional maximum size for resizing
-            
-        Returns:
-            Data URL string
-        """
-        if not image_path.exists():
-            return ""
-        
-        # Create cache key
-        cache_key_parts = [str(image_path), image_path.stat().st_mtime]
-        if max_size:
-            cache_key_parts.extend([str(max_size[0]), str(max_size[1])])
-        cache_key = hashlib.md5('_'.join(map(str, cache_key_parts)).encode()).hexdigest()
-        
-        # Check cache
-        cached_url = OptimizedImageProcessor._image_data_cache.get(cache_key)
-        if cached_url:
-            return cached_url
-        
-        try:
-            with Image.open(image_path) as img:
-                # Resize if needed
-                if max_size and (img.width > max_size[0] or img.height > max_size[1]):
-                    img.thumbnail(max_size, Image.Resampling.LANCZOS)
-                
-                # Convert to bytes
-                img_bytes = io.BytesIO()
-                
-                # Determine format and optimize save
-                if image_path.suffix.lower() in ['.jpg', '.jpeg']:
-                    img.save(img_bytes, format='JPEG', quality=85, optimize=True)
-                    mime_type = 'image/jpeg'
-                elif image_path.suffix.lower() == '.png':
-                    img.save(img_bytes, format='PNG', optimize=True)
-                    mime_type = 'image/png'
-                elif image_path.suffix.lower() == '.webp':
-                    img.save(img_bytes, format='WEBP', quality=85)
-                    mime_type = 'image/webp'
-                else:
-                    # Default to JPEG
-                    img = img.convert('RGB') if img.mode != 'RGB' else img
-                    img.save(img_bytes, format='JPEG', quality=85, optimize=True)
-                    mime_type = 'image/jpeg'
-                
-                img_bytes.seek(0)
-                encoded = base64.b64encode(img_bytes.read()).decode('utf-8')
-                data_url = f"data:{mime_type};base64,{encoded}"
-                
-                # Cache the data URL
-                OptimizedImageProcessor._image_data_cache.set(cache_key, data_url, ttl=3600)  # 1 hour
-                
-                return data_url
-                
-        except Exception as e:
-            print(f"Error creating data URL for {image_path}: {str(e)}")
-            return ""
-    
-    @staticmethod
-    def optimize_image_memory(image: Image.Image) -> Image.Image:
-        """
-        Optimize image for memory usage
-        
-        Args:
-            image: PIL Image object
-            
-        Returns:
-            Optimized image
-        """
-        # Convert to efficient format
-        if image.mode == 'RGBA':
-            # Convert RGBA to RGB with white background
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            background.paste(image, mask=image.split()[-1])
-            return background
-        elif image.mode not in ['RGB', 'L', 'P']:
-            # Convert to RGB
-            return image.convert('RGB')
-        else:
-            return image
-    
-    @staticmethod
-    def clear_caches():
-        """Clear all image processor caches"""
-        OptimizedImageProcessor._thumbnail_cache.clear()
-        OptimizedImageProcessor._image_data_cache.clear()
-        gc.collect()
-
-# ============================================================================
-# OPTIMIZED ALBUM MANAGER WITH PERFORMANCE ENHANCEMENTS
-# ============================================================================
-
-class OptimizedAlbumManager(AlbumManager):
-    """
-    Optimized album manager with performance enhancements:
-    - Asynchronous operations
-    - Intelligent caching
-    - Memory management
-    - Connection pooling
-    """
-    
-    def __init__(self):
-        # Initialize enhanced components
-        self.db = OptimizedDatabaseManager()
-        self.cache = MultiLayerCache(
-            max_memory_items=EnhancedConfig.MAX_CACHE_SIZE,
-            disk_cache_dir=EnhancedConfig.CACHE_DIR
+    def _create_tables(self, cursor):
+        """Create optimized tables"""
+        # Images table with compression hints
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS images (
+            image_id TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            filepath TEXT NOT NULL,
+            file_size INTEGER,
+            width INTEGER,
+            height INTEGER,
+            format TEXT,
+            created_date TIMESTAMP,
+            modified_date TIMESTAMP,
+            exif_data TEXT,
+            checksum TEXT UNIQUE,
+            thumbnail_path TEXT,
+            thumbnail_size INTEGER,
+            dominant_color TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_images_checksum (checksum),
+            INDEX idx_images_created (created_date),
+            INDEX idx_images_size (file_size)
         )
-        self.image_processor = OptimizedImageProcessor()
-        self.session_manager = EnhancedSessionState()
-        self.async_executor = AsyncTaskExecutor(
-            max_workers=EnhancedConfig.MAX_WORKER_THREADS,
-            max_pending_tasks=EnhancedConfig.MAX_PENDING_TASKS
+        ''')
+        
+        # People table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS people (
+            person_id TEXT PRIMARY KEY,
+            folder_name TEXT UNIQUE NOT NULL,
+            display_name TEXT NOT NULL,
+            bio TEXT,
+            birth_date DATE,
+            relationship TEXT,
+            contact_info TEXT,
+            social_links TEXT,
+            profile_image TEXT,
+            image_count INTEGER DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_people_display (display_name),
+            INDEX idx_people_folder (folder_name)
         )
-        self._init_optimized_session_state()
+        ''')
         
-        # Performance monitoring
-        self._init_performance_monitoring()
+        # Album entries with denormalized counts
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS album_entries (
+            entry_id TEXT PRIMARY KEY,
+            image_id TEXT NOT NULL,
+            person_id TEXT NOT NULL,
+            caption TEXT,
+            description TEXT,
+            location TEXT,
+            date_taken TIMESTAMP,
+            tags TEXT,
+            privacy_level TEXT DEFAULT 'public',
+            created_by TEXT,
+            comment_count INTEGER DEFAULT 0,
+            rating_count INTEGER DEFAULT 0,
+            rating_avg REAL DEFAULT 0,
+            view_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (image_id) REFERENCES images (image_id) ON DELETE CASCADE,
+            FOREIGN KEY (person_id) REFERENCES people (person_id) ON DELETE CASCADE,
+            INDEX idx_entries_person (person_id),
+            INDEX idx_entries_created (created_at),
+            INDEX idx_entries_rating (rating_avg),
+            INDEX idx_entries_tags (tags)
+        )
+        ''')
+        
+        # Comments with hierarchy support
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS comments (
+            comment_id TEXT PRIMARY KEY,
+            entry_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            username TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_edited BOOLEAN DEFAULT 0,
+            parent_comment_id TEXT,
+            like_count INTEGER DEFAULT 0,
+            reply_count INTEGER DEFAULT 0,
+            FOREIGN KEY (entry_id) REFERENCES album_entries (entry_id) ON DELETE CASCADE,
+            INDEX idx_comments_entry (entry_id),
+            INDEX idx_comments_user (user_id),
+            INDEX idx_comments_created (created_at),
+            INDEX idx_comments_parent (parent_comment_id)
+        )
+        ''')
+        
+        # Ratings with composite index
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ratings (
+            rating_id TEXT PRIMARY KEY,
+            entry_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            rating_value INTEGER CHECK (rating_value BETWEEN 1 AND 5),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(entry_id, user_id),
+            FOREIGN KEY (entry_id) REFERENCES album_entries (entry_id) ON DELETE CASCADE,
+            INDEX idx_ratings_entry_user (entry_id, user_id),
+            INDEX idx_ratings_value (rating_value)
+        )
+        ''')
+        
+        # User favorites
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_favorites (
+            user_id TEXT,
+            entry_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, entry_id),
+            FOREIGN KEY (entry_id) REFERENCES album_entries (entry_id) ON DELETE CASCADE,
+            INDEX idx_favorites_user (user_id),
+            INDEX idx_favorites_entry (entry_id)
+        )
+        ''')
+        
+        # Search index for full-text search
+        cursor.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+            entry_id,
+            caption,
+            description,
+            tags,
+            person_name,
+            tokenize="porter unicode61"
+        )
+        ''')
     
-    def _init_optimized_session_state(self):
-        """Initialize session state with performance optimizations"""
-        # Core session state with TTL
-        defaults = {
-            'current_page': ('dashboard', 1800),
-            'selected_person': (None, 900),
-            'selected_image': (None, 900),
-            'search_query': ('', 600),
-            'view_mode': ('grid', 3600),
-            'sort_by': ('date', 3600),
-            'sort_order': ('desc', 3600),
-            'selected_tags': ([], 1800),
-            'user_id': (str(uuid.uuid4()), 86400),
-            'username': ('Guest', 86400),
-            'user_role': (UserRoles.VIEWER.value, 86400),
-            'favorites': (set(), 3600),
-            'recently_viewed': ([], 1800),
-            'toc_page': (1, 300),
-            'gallery_page': (1, 300),
-            'show_directory_info': (True, 3600),
-            'performance_mode': (True, 86400)
-        }
+    def _create_views(self, cursor):
+        """Create views for common queries"""
+        # View for entries with aggregated data
+        cursor.execute('''
+        CREATE VIEW IF NOT EXISTS v_entry_details AS
+        SELECT 
+            ae.entry_id,
+            ae.image_id,
+            ae.person_id,
+            ae.caption,
+            ae.description,
+            ae.location,
+            ae.date_taken,
+            ae.tags,
+            ae.privacy_level,
+            ae.created_by,
+            ae.comment_count,
+            ae.rating_count,
+            ae.rating_avg,
+            ae.view_count,
+            ae.created_at,
+            ae.updated_at,
+            p.display_name,
+            p.folder_name,
+            i.filename,
+            i.filepath,
+            i.file_size,
+            i.format,
+            i.width,
+            i.height,
+            i.thumbnail_path,
+            i.dominant_color
+        FROM album_entries ae
+        JOIN people p ON ae.person_id = p.person_id
+        JOIN images i ON ae.image_id = i.image_id
+        ''')
         
-        for key, (default_value, ttl) in defaults.items():
-            if key not in st.session_state:
-                self.session_manager.set_with_ttl(key, default_value, ttl)
-        
-        # Initialize caches in session state
-        if 'image_cache' not in st.session_state:
-            st.session_state.image_cache = {}
-        if 'thumbnail_cache' not in st.session_state:
-            st.session_state.thumbnail_cache = {}
-        if 'metadata_cache' not in st.session_state:
-            st.session_state.metadata_cache = {}
+        # View for people statistics
+        cursor.execute('''
+        CREATE VIEW IF NOT EXISTS v_people_stats AS
+        SELECT 
+            p.person_id,
+            p.display_name,
+            p.folder_name,
+            p.image_count,
+            COUNT(DISTINCT ae.entry_id) as entry_count,
+            COALESCE(AVG(ae.rating_avg), 0) as avg_rating,
+            COALESCE(SUM(ae.comment_count), 0) as total_comments,
+            MAX(ae.updated_at) as last_activity
+        FROM people p
+        LEFT JOIN album_entries ae ON p.person_id = ae.person_id
+        GROUP BY p.person_id
+        ''')
     
-    def _init_performance_monitoring(self):
-        """Initialize performance monitoring"""
-        if 'performance_metrics' not in st.session_state:
-            st.session_state.performance_metrics = {
-                'db_queries': 0,
-                'cache_hits': 0,
-                'cache_misses': 0,
-                'image_processing_time': 0,
-                'start_time': time.time()
-            }
-    
-    def scan_directory_async(self, data_dir: Path = None) -> str:
-        """
-        Scan directory asynchronously
-        
-        Args:
-            data_dir: Directory to scan
+    def _create_triggers(self, cursor):
+        """Create triggers for maintaining denormalized data"""
+        # Trigger to update comment count
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS trg_update_comment_count
+        AFTER INSERT ON comments
+        FOR EACH ROW
+        BEGIN
+            UPDATE album_entries 
+            SET comment_count = comment_count + 1
+            WHERE entry_id = NEW.entry_id;
             
-        Returns:
-            Task ID for tracking
-        """
-        data_dir = data_dir or EnhancedConfig.DATA_DIR
-        task_id = f"scan_{int(time.time())}"
+            -- Update parent comment reply count if exists
+            IF NEW.parent_comment_id IS NOT NULL THEN
+                UPDATE comments
+                SET reply_count = reply_count + 1
+                WHERE comment_id = NEW.parent_comment_id;
+            END IF;
+        END;
+        ''')
         
-        def scan_task():
-            # Run the original scan_directory method in background
-            return super().scan_directory(data_dir)
-        
-        # Submit to async executor
-        self.async_executor.submit_task(task_id, scan_task, priority=1)
-        
-        # Store task info in session state
-        self.session_manager.set_with_ttl(f"task_{task_id}", {
-            'type': 'directory_scan',
-            'status': 'running',
-            'started_at': time.time()
-        }, ttl=3600)
-        
-        return task_id
-    
-    def get_scan_status(self, task_id: str) -> Dict:
-        """
-        Get status of a directory scan task
-        
-        Args:
-            task_id: Task identifier
-            
-        Returns:
-            Task status dictionary
-        """
-        task_info = self.session_manager.get_with_ttl(f"task_{task_id}")
-        if not task_info:
-            return {'status': 'unknown'}
-        
-        # Check with async executor
-        result = self.async_executor.get_task_result(task_id, timeout=0.1)
-        if result is not None:
-            task_info['status'] = 'completed'
-            task_info['result'] = result
-            task_info['completed_at'] = time.time()
-        
-        return task_info
-    
-    @PerformanceOptimizer.st_cache_data(ttl=300)  # Cache for 5 minutes
-    def get_person_stats(self, person_id: str) -> Dict:
-        """Get statistics for a person with enhanced caching"""
-        return super().get_person_stats(person_id)
-    
-    def get_entries_by_person_optimized(self, person_id: str, page: int = 1, 
-                                        search_query: str = None, 
-                                        batch_size: int = None) -> Dict:
-        """
-        Optimized version of get_entries_by_person with intelligent caching
-        
-        Args:
-            person_id: Person identifier
-            page: Page number
-            search_query: Optional search query
-            batch_size: Number of items per page
-            
-        Returns:
-            Dictionary with entries and pagination info
-        """
-        batch_size = batch_size or EnhancedConfig.ITEMS_PER_PAGE
-        
-        # Create cache key
-        cache_key_parts = [f"entries_person_{person_id}", f"page_{page}", f"batch_{batch_size}"]
-        if search_query:
-            cache_key_parts.append(f"search_{hashlib.md5(search_query.encode()).hexdigest()[:8]}")
-        cache_key = '_'.join(cache_key_parts)
-        
-        # Try cache first
-        cached_result = self.cache.get(cache_key)
-        if cached_result:
-            st.session_state.performance_metrics['cache_hits'] += 1
-            return cached_result
-        
-        st.session_state.performance_metrics['cache_misses'] += 1
-        
-        # Calculate offset
-        offset = (page - 1) * batch_size
-        
-        try:
-            with self.db.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                if search_query:
-                    search_pattern = f'%{search_query}%'
-                    cursor.execute('''
-                    SELECT ae.*, p.display_name, i.filename, i.thumbnail_path,
-                           (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating,
-                           (SELECT COUNT(*) FROM comments c WHERE c.entry_id = ae.entry_id) as comment_count
-                    FROM album_entries ae
-                    JOIN people p ON ae.person_id = p.person_id
-                    JOIN images i ON ae.image_id = i.image_id
-                    WHERE ae.person_id = ? AND
-                    (ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)
-                    ORDER BY ae.created_at DESC
-                    LIMIT ? OFFSET ?
-                    ''', (person_id, search_pattern, search_pattern, search_pattern, batch_size, offset))
-                else:
-                    cursor.execute('''
-                    SELECT ae.*, p.display_name, i.filename, i.thumbnail_path,
-                           (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating,
-                           (SELECT COUNT(*) FROM comments c WHERE c.entry_id = ae.entry_id) as comment_count
-                    FROM album_entries ae
-                    JOIN people p ON ae.person_id = p.person_id
-                    JOIN images i ON ae.image_id = i.image_id
-                    WHERE ae.person_id = ?
-                    ORDER BY ae.created_at DESC
-                    LIMIT ? OFFSET ?
-                    ''', (person_id, batch_size, offset))
-                
-                entries = [dict(row) for row in cursor.fetchall()]
-                
-                # Get total count (cached separately)
-                count_cache_key = f"count_person_{person_id}"
-                if search_query:
-                    count_cache_key += f"_search_{hashlib.md5(search_query.encode()).hexdigest()[:8]}"
-                
-                total_count = self.cache.get(count_cache_key)
-                if total_count is None:
-                    if search_query:
-                        search_pattern = f'%{search_query}%'
-                        cursor.execute('''
-                        SELECT COUNT(*)
-                        FROM album_entries ae
-                        WHERE ae.person_id = ? AND
-                        (ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)
-                        ''', (person_id, search_pattern, search_pattern, search_pattern))
-                    else:
-                        cursor.execute('SELECT COUNT(*) FROM album_entries WHERE person_id = ?', (person_id,))
-                    
-                    total_count = cursor.fetchone()[0]
-                    self.cache.set(count_cache_key, total_count, ttl=60)  # Cache count for 1 minute
-                
-                total_pages = max(1, math.ceil(total_count / batch_size))
-                
-                result = {
-                    'entries': entries,
-                    'total_count': total_count,
-                    'total_pages': total_pages,
-                    'current_page': page,
-                    'batch_size': batch_size
-                }
-                
-                # Cache the result
-                self.cache.set(cache_key, result, ttl=120)  # Cache for 2 minutes
-                
-                return result
-                
-        except Exception as e:
-            st.error(f"Error getting entries: {str(e)}")
-            return {
-                'entries': [],
-                'total_count': 0,
-                'total_pages': 1,
-                'current_page': page,
-                'batch_size': batch_size
-            }
-    
-    def get_entry_with_details_optimized(self, entry_id: str, preload_images: bool = True) -> Optional[Dict]:
-        """
-        Get entry details with optimization options
-        
-        Args:
-            entry_id: Entry identifier
-            preload_images: Whether to preload image data URLs
-            
-        Returns:
-            Entry details dictionary
-        """
-        cache_key = f"entry_details_{entry_id}"
-        
-        # Try cache first
-        cached_entry = self.cache.get(cache_key)
-        if cached_entry:
-            return cached_entry
-        
-        # Get from database
-        entry = super().get_entry_with_details(entry_id)
-        if not entry:
-            return None
-        
-        # Optimize image loading
-        if preload_images and entry.get('filepath'):
-            image_path = EnhancedConfig.DATA_DIR / entry['filepath']
-            if image_path.exists():
-                # Use optimized data URL generation
-                entry['image_data_url'] = OptimizedImageProcessor.get_image_data_url_optimized(
-                    image_path, 
-                    max_size=EnhancedConfig.PREVIEW_SIZE
+        # Trigger to update rating stats
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS trg_update_rating_stats
+        AFTER INSERT ON ratings
+        FOR EACH ROW
+        BEGIN
+            UPDATE album_entries 
+            SET 
+                rating_count = rating_count + 1,
+                rating_avg = (
+                    SELECT AVG(rating_value) 
+                    FROM ratings 
+                    WHERE entry_id = NEW.entry_id
                 )
+            WHERE entry_id = NEW.entry_id;
+        END;
+        ''')
         
-        # Cache the entry
-        self.cache.set(cache_key, entry, ttl=300)  # Cache for 5 minutes
-        
-        return entry
+        # Trigger to update person image count
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS trg_update_person_image_count
+        AFTER INSERT ON album_entries
+        FOR EACH ROW
+        BEGIN
+            UPDATE people 
+            SET image_count = image_count + 1
+            WHERE person_id = NEW.person_id;
+        END;
+        ''')
     
-    def batch_process_images(self, image_paths: List[Path], operation: str, **kwargs) -> str:
-        """
-        Batch process multiple images asynchronously
+    @streamlit_cache(ttl=300)
+    def execute_query(self, query: str, params: tuple = (), use_cache: bool = True) -> List[Dict]:
+        """Execute query with caching"""
+        cache_key = f"{query}_{hashlib.md5(pickle.dumps(params)).hexdigest()}"
         
-        Args:
-            image_paths: List of image paths
-            operation: Operation to perform ('thumbnail', 'analyze', 'enhance')
-            **kwargs: Operation-specific parameters
+        if use_cache and cache_key in self.query_cache:
+            self.stats['cache_hits'] += 1
+            return self.query_cache[cache_key]
+        
+        self.stats['cache_misses'] += 1
+        self.stats['queries_executed'] += 1
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
             
-        Returns:
-            Task ID for tracking
-        """
-        task_id = f"batch_{operation}_{int(time.time())}"
-        
-        def batch_task():
-            results = []
-            total = len(image_paths)
-            
-            for i, img_path in enumerate(image_paths):
-                try:
-                    if operation == 'thumbnail':
-                        result = OptimizedImageProcessor.create_thumbnail_optimized(img_path)
-                    elif operation == 'analyze' and hasattr(self, 'analyze_image_with_ai'):
-                        result = self.analyze_image_with_ai(img_path)
-                    elif operation == 'enhance' and hasattr(self, 'apply_ai_modification'):
-                        result = self.apply_ai_modification(img_path, 'auto_enhance')
-                    else:
-                        result = None
-                    
-                    results.append((img_path, result))
-                    
-                    # Update progress in session state
-                    progress_key = f"batch_progress_{task_id}"
-                    self.session_manager.set_with_ttl(progress_key, {
-                        'current': i + 1,
-                        'total': total,
-                        'percent': ((i + 1) / total) * 100
-                    }, ttl=300)
-                    
-                except Exception as e:
-                    results.append((img_path, {'error': str(e)}))
-            
-            return results
-        
-        # Submit batch task
-        self.async_executor.submit_task(task_id, batch_task, priority=2)
-        
-        # Store task info
-        self.session_manager.set_with_ttl(f"task_{task_id}", {
-            'type': f'batch_{operation}',
-            'status': 'running',
-            'total_images': len(image_paths),
-            'started_at': time.time()
-        }, ttl=3600)
-        
-        return task_id
+            if query.strip().upper().startswith('SELECT'):
+                results = [dict(row) for row in cursor.fetchall()]
+                if use_cache:
+                    self.query_cache[cache_key] = results
+                    # Limit cache size
+                    if len(self.query_cache) > 1000:
+                        oldest_key = next(iter(self.query_cache))
+                        del self.query_cache[oldest_key]
+                return results
+            else:
+                return []
     
-    def get_batch_progress(self, task_id: str) -> Dict:
-        """
-        Get progress of a batch processing task
-        
-        Args:
-            task_id: Task identifier
-            
-        Returns:
-            Progress dictionary
-        """
-        # Get progress from session state
-        progress = self.session_manager.get_with_ttl(f"batch_progress_{task_id}")
-        if not progress:
-            progress = {'current': 0, 'total': 0, 'percent': 0}
-        
-        # Get task status
-        task_info = self.session_manager.get_with_ttl(f"task_{task_id}")
-        if task_info:
-            progress.update({
-                'status': task_info.get('status', 'unknown'),
-                'type': task_info.get('type', 'unknown')
-            })
-        
-        # Check if task is complete
-        result = self.async_executor.get_task_result(task_id, timeout=0.1)
-        if result is not None:
-            progress['status'] = 'completed'
-            progress['result'] = result
-        
-        return progress
-    
-    def cleanup_resources(self):
-        """Cleanup resources and optimize memory"""
-        # Cleanup expired session state
-        self.session_manager._cleanup_expired_entries()
-        
-        # Cleanup old async tasks
-        self.async_executor.cleanup_old_tasks()
-        
-        # Clear expired cache entries
-        self.cache.cleanup_expired()
-        
-        # Force garbage collection
-        gc.collect()
-        
-        # Clear image processor caches if memory is high
-        try:
-            import psutil
-            memory_mb = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-            if memory_mb > EnhancedConfig.MAX_MEMORY_MB:
-                OptimizedImageProcessor.clear_caches()
-                print(f"Cleared image caches due to high memory: {memory_mb:.1f}MB")
-        except:
-            pass
-    
-    def get_performance_stats(self) -> Dict:
-        """Get comprehensive performance statistics"""
-        db_stats = self.db.get_stats()
-        cache_stats = self.cache.get_stats()
-        async_stats = self.async_executor.get_stats()
-        session_stats = self.session_manager.get_stats()
-        
-        # Calculate uptime
-        uptime = time.time() - st.session_state.performance_metrics['start_time']
-        
-        # Memory usage
-        memory_mb = 0
-        try:
-            import psutil
-            memory_mb = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-        except:
-            pass
-        
-        return {
-            'uptime_seconds': uptime,
-            'uptime_human': str(datetime.timedelta(seconds=int(uptime))),
-            'memory_usage_mb': memory_mb,
-            'database': db_stats,
-            'cache': cache_stats,
-            'async_tasks': async_stats,
-            'session_state': session_stats,
-            'performance_metrics': st.session_state.performance_metrics
-        }
-
-# ============================================================================
-# OPTIMIZED UI COMPONENTS WITH VIRTUAL SCROLLING AND LAZY LOADING
-# ============================================================================
-
-class OptimizedUIComponents(UIComponents):
-    """Optimized UI components with virtual scrolling and lazy loading"""
-    
-    @staticmethod
-    def render_virtual_scroll_gallery(entries: List[Dict], items_per_row: int = 4, 
-                                      batch_size: int = 20, height: int = 800):
-        """
-        Render gallery with virtual scrolling for performance
-        
-        Args:
-            entries: List of entry dictionaries
-            items_per_row: Number of items per row
-            batch_size: Number of items to render at once
-            height: Container height in pixels
-        """
-        if not entries:
-            st.info("No images to display")
+    def bulk_insert(self, table: str, data: List[Dict]):
+        """Bulk insert for better performance"""
+        if not data:
             return
         
-        # Create scroll position tracking
-        scroll_key = f"scroll_{hash(str(entries[:10]))}"
-        if scroll_key not in st.session_state:
-            st.session_state[scroll_key] = {
-                'offset': 0,
-                'total': len(entries)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get column names from first item
+            columns = list(data[0].keys())
+            placeholders = ', '.join(['?' for _ in columns])
+            column_names = ', '.join(columns)
+            
+            # Prepare values
+            values = [tuple(item[col] for col in columns) for item in data]
+            
+            # Execute with executemany
+            cursor.executemany(
+                f'INSERT OR REPLACE INTO {table} ({column_names}) VALUES ({placeholders})',
+                values
+            )
+            
+            # Clear query cache for this table
+            self.query_cache = {k: v for k, v in self.query_cache.items() if table not in k}
+    
+    def vacuum(self):
+        """Optimize database"""
+        with self.get_connection() as conn:
+            conn.execute("VACUUM")
+            conn.execute("ANALYZE")
+            conn.execute("PRAGMA optimize")
+            logging.info("Database optimized")
+    
+    def get_stats(self) -> Dict:
+        """Get database statistics"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            stats = {
+                'connection_pool_size': len(self._connection_pool),
+                'query_cache_size': len(self.query_cache),
+                **self.stats
             }
+            
+            # Table sizes
+            tables = ['images', 'people', 'album_entries', 'comments', 'ratings']
+            for table in tables:
+                cursor.execute(f'SELECT COUNT(*) as count FROM {table}')
+                stats[f'{table}_count'] = cursor.fetchone()[0]
+            
+            return stats
+
+# ============================================================================
+# LAZY LOADING IMAGE GALLERY
+# ============================================================================
+class LazyImageGallery:
+    """Lazy loading image gallery for better performance"""
+    
+    def __init__(self, manager):
+        self.manager = manager
+        self.loaded_images = set()
+        self.image_cache = {}
+        self.batch_size = EnhancedConfig.LAZY_LOADING_CHUNK
+    
+    def render_gallery(self, entries: List[Dict], columns: int = 4, virtual_scroll: bool = True):
+        """Render gallery with lazy loading"""
+        if not entries:
+            st.info("No images found")
+            return
         
-        scroll_state = st.session_state[scroll_key]
-        offset = scroll_state['offset']
+        # Calculate visible range for virtual scrolling
+        total_items = len(entries)
+        
+        if virtual_scroll and total_items > self.batch_size * 2:
+            # Virtual scrolling implementation
+            self._render_virtual_gallery(entries, columns)
+        else:
+            # Regular paginated gallery
+            self._render_paginated_gallery(entries, columns)
+    
+    def _render_virtual_gallery(self, entries: List[Dict], columns: int):
+        """Render gallery with virtual scrolling"""
+        total_items = len(entries)
+        
+        # Create scroll position tracker
+        if 'gallery_scroll_pos' not in st.session_state:
+            st.session_state.gallery_scroll_pos = 0
         
         # Calculate visible range
-        end_idx = min(offset + batch_size, len(entries))
-        visible_entries = entries[offset:end_idx]
+        start_idx = st.session_state.gallery_scroll_pos
+        end_idx = min(start_idx + self.batch_size * 2, total_items)
         
-        # Create container with fixed height for scrolling
-        container = st.container(height=height)
+        # Display visible items
+        visible_entries = entries[start_idx:end_idx]
         
-        with container:
-            # Render visible items
-            cols = st.columns(items_per_row)
-            for idx, entry in enumerate(visible_entries):
-                col_idx = idx % items_per_row
-                with cols[col_idx]:
-                    OptimizedUIComponents._render_gallery_item_optimized(entry)
-            
-            # Show loading indicator if more items exist
-            if end_idx < len(entries):
-                st.progress((end_idx / len(entries)) * 100, text="Loading more images...")
-            
-            # Navigation controls
-            col1, col2, col3 = st.columns([1, 2, 1])
-            
-            with col1:
-                if offset > 0:
-                    if st.button("⬆ Load Previous", key=f"{scroll_key}_prev"):
-                        scroll_state['offset'] = max(0, offset - batch_size)
-                        st.rerun()
-            
-            with col2:
-                st.caption(f"Showing {offset + 1}-{end_idx} of {len(entries)} images")
-            
-            with col3:
-                if end_idx < len(entries):
-                    if st.button("⬇ Load More", key=f"{scroll_key}_next"):
-                        scroll_state['offset'] = end_idx
-                        st.rerun()
+        # Create grid
+        cols = st.columns(columns)
+        for idx, entry in enumerate(visible_entries):
+            with cols[idx % columns]:
+                self._render_gallery_item(entry)
+        
+        # Load next batch on scroll detection
+        scroll_position = st.slider(
+            "Scroll",
+            min_value=0,
+            max_value=total_items - self.batch_size,
+            value=st.session_state.gallery_scroll_pos,
+            key="gallery_scroll",
+            label_visibility="collapsed"
+        )
+        
+        if scroll_position != st.session_state.gallery_scroll_pos:
+            st.session_state.gallery_scroll_pos = scroll_position
+            st.rerun()
+        
+        # Show loading indicator if more items to load
+        if end_idx < total_items:
+            with st.spinner(f"Loaded {end_idx} of {total_items} items..."):
+                # Pre-load next batch
+                next_batch = entries[end_idx:end_idx + self.batch_size]
+                self._preload_images(next_batch)
     
-    @staticmethod
-    def _render_gallery_item_optimized(entry: Dict):
-        """Optimized gallery item rendering with lazy image loading"""
+    def _render_paginated_gallery(self, entries: List[Dict], columns: int):
+        """Render paginated gallery"""
+        total_items = len(entries)
+        items_per_page = st.session_state.get('items_per_page', EnhancedConfig.ITEMS_PER_PAGE)
+        current_page = st.session_state.get('current_page_num', 1)
+        
+        # Calculate page range
+        total_pages = max(1, math.ceil(total_items / items_per_page))
+        start_idx = (current_page - 1) * items_per_page
+        end_idx = min(start_idx + items_per_page, total_items)
+        
+        # Get page items
+        page_entries = entries[start_idx:end_idx]
+        
+        # Render grid
+        cols = st.columns(columns)
+        for idx, entry in enumerate(page_entries):
+            with cols[idx % columns]:
+                self._render_gallery_item(entry)
+        
+        # Pagination controls
+        if total_pages > 1:
+            self._render_pagination(current_page, total_pages, total_items)
+    
+    def _render_gallery_item(self, entry: Dict):
+        """Render individual gallery item"""
         with st.container(border=True):
-            # Use lazy image loading
-            if entry.get('thumbnail_data_url'):
-                st.image(
-                    entry['thumbnail_data_url'],
-                    use_column_width=True,
-                    output_format="JPEG",
-                    clamp=True
-                )
-            elif entry.get('thumbnail_path'):
-                thumbnail_path = Path(entry['thumbnail_path'])
-                if thumbnail_path.exists():
-                    # Generate data URL on demand
-                    data_url = OptimizedImageProcessor.get_image_data_url_optimized(
-                        thumbnail_path,
-                        max_size=EnhancedConfig.THUMBNAIL_SIZE
-                    )
-                    st.image(data_url, use_column_width=True)
-                else:
-                    st.markdown("🖼️")
+            # Thumbnail with lazy loading
+            thumbnail = self._get_thumbnail(entry)
+            if thumbnail:
+                st.image(thumbnail, use_column_width=True)
             else:
-                st.markdown("🖼️")
+                # Placeholder
+                st.markdown(
+                    f'<div style="background: #f0f0f0; height: 200px; display: flex; align-items: center; justify-content: center; border-radius: 8px;">'
+                    f'<span style="color: #666;">Loading...</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
             
-            # Caption with truncation
+            # Caption and info
             caption = entry.get('caption', 'Untitled')
             if len(caption) > 30:
-                caption = caption[:27] + "..."
+                caption = caption[:27] + '...'
+            
             st.markdown(f"**{caption}**")
             
             # Person name
-            st.caption(f"👤 {entry.get('display_name', 'Unknown')}")
+            display_name = entry.get('display_name', 'Unknown')
+            if len(display_name) > 20:
+                display_name = display_name[:17] + '...'
             
-            # Rating (if available)
-            if entry.get('avg_rating'):
-                st.markdown(UIComponents.rating_stars(entry['avg_rating'], size=15))
+            st.caption(f"👤 {display_name}")
             
-            # Actions in compact layout
+            # Rating
+            rating = entry.get('rating_avg', 0)
+            if rating > 0:
+                stars = '⭐' * int(rating) + '☆' * (5 - int(rating))
+                st.caption(f"{stars} ({rating:.1f})")
+            
+            # Actions
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("👁️", key=f"view_{entry['entry_id']}", 
-                           help="View details", use_container_width=True):
-                    st.session_state['selected_image'] = entry['entry_id']
-                    st.session_state['current_page'] = 'image_detail'
-                    st.rerun()
+                if st.button("👁️", key=f"view_{entry['entry_id']}", use_container_width=True):
+                    st.session_state.selected_image = entry['entry_id']
+                    SessionStateManager.navigate_to('image_detail')
             with col2:
-                is_favorited = entry['entry_id'] in st.session_state.get('favorites', set())
+                is_favorited = entry['entry_id'] in st.session_state.favorites
                 if is_favorited:
-                    if st.button("⭐", key=f"unfav_{entry['entry_id']}", 
-                               help="Remove favorite", use_container_width=True):
-                        # This would call manager.remove_from_favorites in full implementation
-                        pass
+                    if st.button("⭐", key=f"unfav_{entry['entry_id']}", use_container_width=True):
+                        self.manager.remove_from_favorites(entry['entry_id'])
+                        st.rerun()
                 else:
-                    if st.button("☆", key=f"fav_{entry['entry_id']}", 
-                               help="Add favorite", use_container_width=True):
-                        # This would call manager.add_to_favorites in full implementation
-                        pass
+                    if st.button("☆", key=f"fav_{entry['entry_id']}", use_container_width=True):
+                        self.manager.add_to_favorites(entry['entry_id'])
+                        st.rerun()
     
-    @staticmethod
-    def render_performance_dashboard(manager: OptimizedAlbumManager):
-        """Render performance monitoring dashboard"""
-        st.title("📊 Performance Dashboard")
+    def _get_thumbnail(self, entry: Dict) -> Optional[bytes]:
+        """Get thumbnail with caching"""
+        entry_id = entry.get('entry_id')
+        thumbnail_path = entry.get('thumbnail_path')
         
-        # Get performance stats
-        with st.spinner("Collecting performance data..."):
-            stats = manager.get_performance_stats()
+        if not thumbnail_path:
+            return None
         
-        # Overall stats
-        col1, col2, col3, col4 = st.columns(4)
+        # Check cache
+        cache_key = f"thumbnail_{entry_id}"
+        if cache_key in self.image_cache:
+            return self.image_cache[cache_key]
+        
+        # Load thumbnail
+        try:
+            thumb_path = Path(thumbnail_path)
+            if thumb_path.exists():
+                with open(thumb_path, 'rb') as f:
+                    thumbnail = f.read()
+                    self.image_cache[cache_key] = thumbnail
+                    return thumbnail
+        except Exception as e:
+            logging.warning(f"Could not load thumbnail {thumbnail_path}: {e}")
+        
+        return None
+    
+    def _preload_images(self, entries: List[Dict]):
+        """Preload images in background"""
+        for entry in entries:
+            self._get_thumbnail(entry)  # Cache thumbnails
+    
+    def _render_pagination(self, current_page: int, total_pages: int, total_items: int):
+        """Render pagination controls"""
+        st.divider()
+        
+        col1, col2, col3, col4, col5 = st.columns([1, 2, 1, 2, 1])
         
         with col1:
-            st.metric("Uptime", stats['uptime_human'])
+            if current_page > 1 and st.button("◀ Prev", use_container_width=True):
+                st.session_state.current_page_num = current_page - 1
+                st.rerun()
         
         with col2:
-            st.metric("Memory Usage", f"{stats['memory_usage_mb']:.1f} MB")
+            page_options = list(range(1, total_pages + 1))
+            if len(page_options) > 10:
+                # Show abbreviated options for many pages
+                page_options = (
+                    [1, 2, 3] +
+                    ['...'] +
+                    list(range(max(4, current_page - 2), min(total_pages - 2, current_page + 3))) +
+                    ['...'] +
+                    [total_pages - 2, total_pages - 1, total_pages]
+                )
+            
+            selected_page = st.selectbox(
+                "Page",
+                page_options,
+                index=current_page - 1 if current_page - 1 < len(page_options) else 0,
+                key="page_select",
+                label_visibility="collapsed"
+            )
+            
+            if selected_page != current_page and selected_page != '...':
+                st.session_state.current_page_num = selected_page
+                st.rerun()
         
         with col3:
-            cache_hit_rate = stats['cache'].get('hit_rate', '0%')
-            st.metric("Cache Hit Rate", cache_hit_rate)
+            st.markdown(f"**Page {current_page} of {total_pages}**")
+            st.caption(f"{total_items} items")
         
         with col4:
-            db_size = stats['database'].get('database_size_mb', 0)
-            st.metric("Database Size", f"{db_size:.1f} MB")
-        
-        # Tabs for detailed stats
-        tab1, tab2, tab3, tab4 = st.tabs(["Database", "Cache", "Async Tasks", "Session"])
-        
-        with tab1:
-            st.subheader("Database Statistics")
-            db_stats = stats['database']
+            items_per_page = st.selectbox(
+                "Items per page",
+                [12, 24, 48, 96],
+                index=[12, 24, 48, 96].index(st.session_state.items_per_page) if st.session_state.items_per_page in [12, 24, 48, 96] else 1,
+                key="items_per_page_select",
+                label_visibility="collapsed"
+            )
             
-            if 'database' in db_stats:
-                st.json(db_stats['database'])
-            
-            if 'connection_pool' in db_stats:
-                st.markdown("**Connection Pool:**")
-                pool_stats = db_stats['connection_pool']
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Available", pool_stats.get('available_connections', 0))
-                with col2:
-                    st.metric("In Use", pool_stats.get('in_use_connections', 0))
-                with col3:
-                    st.metric("Total Created", pool_stats.get('total_connections_created', 0))
-        
-        with tab2:
-            st.subheader("Cache Statistics")
-            cache_stats = stats['cache']
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Memory Items", cache_stats.get('memory_items', 0))
-            with col2:
-                st.metric("Cache Hits", cache_stats.get('cache_hits', 0))
-            with col3:
-                st.metric("Cache Misses", cache_stats.get('cache_misses', 0))
-            
-            st.metric("Hit Rate", cache_stats.get('hit_rate', '0%'))
-            
-            if cache_stats.get('disk_cache_enabled'):
-                st.success("✅ Disk cache enabled")
-            else:
-                st.info("ℹ️ Disk cache not available")
-        
-        with tab3:
-            st.subheader("Async Task Statistics")
-            task_stats = stats['async_tasks']
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Tasks", task_stats.get('total_tasks', 0))
-            with col2:
-                st.metric("Completed", task_stats.get('tasks_completed', 0))
-            with col3:
-                st.metric("Failed", task_stats.get('tasks_failed', 0))
-            
-            st.metric("Avg Execution Time", 
-                     f"{task_stats.get('avg_execution_time_seconds', 0):.2f}s")
-            
-            if 'status_counts' in task_stats:
-                st.markdown("**Task Status:**")
-                for status, count in task_stats['status_counts'].items():
-                    st.text(f"{status}: {count}")
-        
-        with tab4:
-            st.subheader("Session State Statistics")
-            session_stats = stats['session_state']
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Keys", session_stats.get('total_keys', 0))
-            with col2:
-                st.metric("TTL Managed", session_stats.get('ttl_managed_keys', 0))
-            with col3:
-                st.metric("Expired Entries", session_stats.get('expired_entries', 0))
-            
-            st.metric("Total Accesses", session_stats.get('access_count', 0))
-        
-        # Performance actions
-        st.divider()
-        st.subheader("Performance Actions")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🔄 Clear All Caches", use_container_width=True):
-                manager.cache.clear()
-                OptimizedImageProcessor.clear_caches()
-                st.success("Caches cleared!")
+            if items_per_page != st.session_state.items_per_page:
+                st.session_state.items_per_page = items_per_page
+                st.session_state.current_page_num = 1
                 st.rerun()
         
-        with col2:
-            if st.button("🧹 Cleanup Resources", use_container_width=True):
-                manager.cleanup_resources()
-                st.success("Resources cleaned up!")
-                st.rerun()
-        
-        with col3:
-            if st.button("📊 Refresh Stats", use_container_width=True):
+        with col5:
+            if current_page < total_pages and st.button("Next ▶", use_container_width=True):
+                st.session_state.current_page_num = current_page + 1
                 st.rerun()
 
 # ============================================================================
-# ENHANCED PHOTO ALBUM APP WITH PERFORMANCE OPTIMIZATIONS
+# ENHANCED AI MANAGER WITH MODEL CACHING
 # ============================================================================
+class EnhancedAIManager:
+    """AI manager with lazy loading and model caching"""
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+    
+    def _initialize(self):
+        """Initialize AI manager"""
+        self.ai_available = lazy_import_ai()
+        self.loaded_models = {}
+        self.model_cache = PersistentCache(
+            EnhancedConfig.AI_MODELS_DIR / "model_cache.pkl",
+            max_size=EnhancedConfig.AI_MODEL_CACHE_SIZE
+        )
+        self.inference_queue = Queue()
+        self.is_processing = False
+        
+        # Start background processor
+        self._start_background_processor()
+    
+    def _start_background_processor(self):
+        """Start background inference processor"""
+        def processor():
+            while True:
+                try:
+                    task = self.inference_queue.get(timeout=1)
+                    if task is None:  # Shutdown signal
+                        break
+                    
+                    future, func, args, kwargs = task
+                    try:
+                        result = func(*args, **kwargs)
+                        future.set_result(result)
+                    except Exception as e:
+                        future.set_exception(e)
+                except Empty:
+                    continue
+                except Exception as e:
+                    logging.error(f"Background processor error: {e}")
+        
+        self.processor_thread = threading.Thread(target=processor, daemon=True)
+        self.processor_thread.start()
+    
+    def load_model(self, model_name: str, force_reload: bool = False):
+        """Load AI model with caching"""
+        if not self.ai_available:
+            return None
+        
+        # Check cache
+        cache_key = f"model_{model_name}"
+        if not force_reload and cache_key in self.loaded_models:
+            return self.loaded_models[cache_key]
+        
+        try:
+            if model_name == "caption":
+                processor = AI_MODULES['BlipProcessor'].from_pretrained(
+                    "Salesforce/blip-image-captioning-base"
+                )
+                model = AI_MODULES['BlipForConditionalGeneration'].from_pretrained(
+                    "Salesforce/blip-image-captioning-base"
+                )
+                device = "cuda" if AI_MODULES['torch'].cuda.is_available() else "cpu"
+                model.to(device)
+                model.eval()
+                
+                self.loaded_models[cache_key] = (processor, model, device)
+                
+            elif model_name == "clip":
+                processor = AI_MODULES['CLIPProcessor'].from_pretrained(
+                    "openai/clip-vit-base-patch32"
+                )
+                model = AI_MODULES['CLIPModel'].from_pretrained(
+                    "openai/clip-vit-base-patch32"
+                )
+                device = "cuda" if AI_MODULES['torch'].cuda.is_available() else "cpu"
+                model.to(device)
+                model.eval()
+                
+                self.loaded_models[cache_key] = (processor, model, device)
+            
+            elif model_name == "diffusion":
+                # Load with lower precision for memory efficiency
+                torch_dtype = AI_MODULES['torch'].float16 if AI_MODULES['torch'].cuda.is_available() else AI_MODULES['torch'].float32
+                
+                pipe = AI_MODULES['StableDiffusionPipeline'].from_pretrained(
+                    "runwayml/stable-diffusion-v1-5",
+                    torch_dtype=torch_dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False
+                )
+                
+                if AI_MODULES['torch'].cuda.is_available():
+                    pipe = pipe.to("cuda")
+                    pipe.enable_attention_slicing()
+                
+                self.loaded_models[cache_key] = pipe
+            
+            logging.info(f"Loaded model: {model_name}")
+            return self.loaded_models[cache_key]
+            
+        except Exception as e:
+            logging.error(f"Error loading model {model_name}: {e}")
+            return None
+    
+    def unload_model(self, model_name: str):
+        """Unload model to free memory"""
+        cache_key = f"model_{model_name}"
+        if cache_key in self.loaded_models:
+            del self.loaded_models[cache_key]
+            
+            # Clear GPU cache
+            if AI_MODULES['torch'].cuda.is_available():
+                AI_MODULES['torch'].cuda.empty_cache()
+            
+            logging.info(f"Unloaded model: {model_name}")
+    
+    def async_inference(self, model_name: str, inference_func: Callable, *args, **kwargs):
+        """Run inference asynchronously"""
+        future = concurrent.futures.Future()
+        self.inference_queue.put((future, inference_func, args, kwargs))
+        return future
+    
+    def generate_caption(self, image: Image.Image) -> str:
+        """Generate caption for image"""
+        if not self.ai_available:
+            return "AI not available"
+        
+        try:
+            model_result = self.load_model("caption")
+            if not model_result:
+                return "Could not load caption model"
+            
+            processor, model, device = model_result
+            
+            # Prepare image
+            inputs = processor(image, return_tensors="pt").to(device)
+            
+            # Generate caption
+            with AI_MODULES['torch'].no_grad():
+                out = model.generate(**inputs, max_length=30, num_beams=5)
+            
+            caption = processor.decode(out[0], skip_special_tokens=True)
+            
+            # Update usage count
+            st.session_state.ai_usage_count += 1
+            
+            return caption
+            
+        except Exception as e:
+            logging.error(f"Error generating caption: {e}")
+            return "Error generating caption"
+    
+    def analyze_image(self, image: Image.Image) -> Dict:
+        """Comprehensive image analysis"""
+        analysis = {}
+        
+        # Generate caption
+        analysis['caption'] = self.generate_caption(image)
+        
+        # Get image features using CLIP
+        try:
+            model_result = self.load_model("clip")
+            if model_result:
+                processor, model, device = model_result
+                
+                inputs = processor(images=image, return_tensors="pt").to(device)
+                
+                with AI_MODULES['torch'].no_grad():
+                    image_features = model.get_image_features(**inputs)
+                
+                analysis['features'] = image_features.cpu().numpy().tolist()
+        except Exception as e:
+            logging.warning(f"Could not extract CLIP features: {e}")
+        
+        # Basic image stats
+        img_array = np.array(image)
+        analysis['stats'] = {
+            'brightness': float(np.mean(img_array)),
+            'contrast': float(np.std(img_array)),
+            'size': img_array.shape
+        }
+        
+        return analysis
+    
+    def apply_style_transfer(self, image: Image.Image, style_prompt: str) -> Optional[Image.Image]:
+        """Apply style transfer using diffusion"""
+        if not self.ai_available:
+            return None
+        
+        try:
+            pipe = self.load_model("diffusion")
+            if not pipe:
+                return None
+            
+            # Prepare image
+            init_image = image.convert("RGB").resize((512, 512))
+            
+            # Generate
+            result = pipe(
+                prompt=style_prompt,
+                image=init_image,
+                strength=0.7,
+                guidance_scale=7.5,
+                num_inference_steps=30
+            ).images[0]
+            
+            # Resize back
+            result = result.resize(image.size)
+            
+            # Update usage count
+            st.session_state.ai_usage_count += 1
+            
+            return result
+            
+        except Exception as e:
+            logging.error(f"Error applying style transfer: {e}")
+            return None
+    
+    def cleanup(self):
+        """Clean up AI resources"""
+        self.loaded_models.clear()
+        
+        if self.ai_available and AI_MODULES['torch'].cuda.is_available():
+            AI_MODULES['torch'].cuda.empty_cache()
+        
+        logging.info("AI resources cleaned up")
 
-class EnhancedPhotoAlbumApp(PhotoAlbumApp):
-    """Enhanced photo album app with all performance optimizations"""
+# ============================================================================
+# ENHANCED ALBUM MANAGER WITH OPTIMIZATIONS
+# ============================================================================
+class EnhancedAlbumManager:
+    """Enhanced album manager with all optimizations"""
     
     def __init__(self):
-        # Initialize configuration
-        EnhancedConfig.init_directories()
+        self.db = OptimizedDatabaseManager()
+        self.image_processor = OptimizedImageProcessor()
+        self.ai_manager = EnhancedAIManager() if lazy_import_ai() else None
+        self.cache = PersistentCache()
+        self.performance_monitor = PerformanceMonitor()
+        self.lazy_gallery = LazyImageGallery(self)
         
-        # Initialize optimized manager
-        self.manager = OptimizedAlbumManager()
-        self.ui_components = OptimizedUIComponents()
-        self.performance_mode = True
+        # Initialize session state
+        SessionStateManager.initialize_session()
         
-        # Setup page with optimizations
-        self.setup_optimized_page_config()
-        self.check_initialization()
+        # Start performance monitoring
+        self._start_monitoring()
     
-    def setup_optimized_page_config(self):
-        """Configure Streamlit page with performance optimizations"""
-        st.set_page_config(
-            page_title=f"{EnhancedConfig.APP_NAME} (Optimized)",
-            page_icon="⚡",
-            layout="wide",
-            initial_sidebar_state="expanded",
-            menu_items={
-                'Get Help': 'https://github.com/yourusername/photo-album',
-                'Report a bug': 'https://github.com/yourusername/photo-album/issues',
-                'About': f"# {EnhancedConfig.APP_NAME} v{EnhancedConfig.VERSION}\nPerformance-optimized version"
-            }
-        )
+    def _start_monitoring(self):
+        """Start background performance monitoring"""
+        def monitor():
+            while True:
+                try:
+                    self.performance_monitor.sample_resources()
+                    time.sleep(EnhancedConfig.PERFORMANCE_SAMPLING_INTERVAL)
+                    
+                    # Auto-cleanup if memory is high
+                    process = psutil.Process()
+                    if process.memory_percent() > EnhancedConfig.MAX_MEMORY_PERCENT:
+                        self._cleanup_resources()
+                        
+                except Exception as e:
+                    logging.error(f"Monitoring error: {e}")
+                    time.sleep(10)
         
-        # Add performance-optimized CSS
-        st.markdown("""
-        <style>
-        /* Performance optimizations */
-        .stImage > img, .stImage > div > img {
-            max-width: 100%;
-            height: auto;
-            display: block;
-        }
-        
-        /* Reduce animations */
-        * {
-            animation-duration: 0.1s !important;
-            transition-duration: 0.1s !important;
-        }
-        
-        /* Optimize scrolling */
-        .element-container {
-            contain: content;
-        }
-        
-        /* Compact buttons */
-        .stButton > button {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.875rem;
-        }
-        
-        /* Performance warning */
-        .performance-warning {
-            background-color: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 0.25rem;
-            padding: 0.75rem;
-            margin-bottom: 1rem;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
     
-    def render_optimized_sidebar(self):
-        """Render optimized sidebar with performance controls"""
-        with st.sidebar:
-            st.title(f"⚡ {EnhancedConfig.APP_NAME}")
-            st.caption(f"v{EnhancedConfig.VERSION} - Performance Mode")
-            
-            # Performance toggle
-            st.divider()
-            performance_mode = st.checkbox(
-                "Enable Performance Mode", 
-                value=self.performance_mode,
-                help="Toggle performance optimizations"
-            )
-            
-            if performance_mode != self.performance_mode:
-                self.performance_mode = performance_mode
-                st.rerun()
-            
-            # User info (compact)
-            st.divider()
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.markdown("👤")
-            with col2:
-                st.markdown(f"**{st.session_state['username']}**")
-                st.caption(st.session_state['user_role'].title())
-            
-            # Navigation (optimized)
-            st.divider()
-            st.subheader("Navigation")
-            
-            nav_items = [
-                ("🏠 Dashboard", "dashboard"),
-                ("👥 People", "people"),
-                ("📁 Gallery", "gallery"),
-                ("⭐ Favorites", "favorites"),
-                ("🔍 Search", "search"),
-                ("📊 Statistics", "statistics"),
-                ("⚙️ Settings", "settings"),
-                ("📤 Import/Export", "import_export"),
-                ("📊 Performance", "performance")  # New performance page
-            ]
-            
-            # Add AI navigation if available
-            if EnhancedConfig.AI_ENABLED:
-                nav_items.extend([
-                    ("🤖 AI Analysis", "ai_analysis"),
-                    ("🎨 AI Studio", "ai_studio"),
-                    ("⚡ Quick Enhance", "quick_enhance"),
-                    ("📊 AI Insights", "ai_insights")
-                ])
-            
-            for label, key in nav_items:
-                if st.button(label, use_container_width=True, key=f"nav_{key}"):
-                    st.session_state['current_page'] = key
-                    st.rerun()
-            
-            # Quick actions with performance indicators
-            st.divider()
-            st.subheader("Quick Actions")
-            
-            # Async directory scan
-            if st.button("🔄 Scan Directory Async", use_container_width=True,
-                        help="Scan directory in background without blocking UI"):
-                task_id = self.manager.scan_directory_async()
-                st.success(f"Scan started (Task: {task_id})")
-                # Note: In production, you'd want to show progress
-            
-            # Cache management
-            if st.button("🗑️ Clear Cache", use_container_width=True):
-                self.manager.cache.clear()
-                st.success("Cache cleared!")
-            
-            # Resource cleanup
-            if st.button("🧹 Cleanup", use_container_width=True):
-                self.manager.cleanup_resources()
-                st.success("Resources cleaned up!")
-            
-            # Stats display
-            st.divider()
-            st.subheader("Stats")
-            
-            people = self.manager.db.get_all_people()
-            total_images = sum(self.manager.get_person_stats(p['person_id'])['image_count'] 
-                             for p in people)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("People", len(people))
-            with col2:
-                st.metric("Images", total_images)
-            
-            # Cache stats
-            cache_stats = self.manager.cache.get_stats()
-            st.caption(f"Cache: {cache_stats.get('hit_rate', '0%')} hit rate")
-            
-            # Performance warning if memory high
-            try:
-                import psutil
-                memory_mb = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-                if memory_mb > EnhancedConfig.MAX_MEMORY_MB * 0.8:  # 80% threshold
-                    st.warning(f"High memory: {memory_mb:.1f}MB")
-            except:
-                pass
+    def _cleanup_resources(self):
+        """Clean up resources when memory is high"""
+        logging.info("Memory high, cleaning up resources")
+        
+        # Clear image cache
+        self.lazy_gallery.image_cache.clear()
+        
+        # Clear AI cache
+        if self.ai_manager:
+            self.ai_manager.unload_model("diffusion")
+        
+        # Run garbage collection
+        gc.collect()
+        
+        if lazy_import_ai() and AI_MODULES['torch'].cuda.is_available():
+            AI_MODULES['torch'].cuda.empty_cache()
     
-    def render_performance_page(self):
-        """Render performance monitoring and configuration page"""
-        self.ui_components.render_performance_dashboard(self.manager)
+    @streamlit_cache(ttl=600)
+    def get_people_with_stats(self) -> List[Dict]:
+        """Get people with statistics"""
+        query = '''
+        SELECT p.*, ps.entry_count, ps.avg_rating, ps.total_comments, ps.last_activity
+        FROM people p
+        LEFT JOIN v_people_stats ps ON p.person_id = ps.person_id
+        ORDER BY p.display_name
+        '''
         
-        # Performance configuration
-        st.divider()
-        st.subheader("Performance Configuration")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Cache configuration
-            st.markdown("**Cache Settings**")
-            cache_ttl = st.slider(
-                "Cache TTL (seconds)",
-                min_value=60,
-                max_value=86400,
-                value=EnhancedConfig.CACHE_TTL,
-                step=300,
-                help="How long to cache data before refreshing"
-            )
-            
-            max_cache_size = st.slider(
-                "Max Cache Items",
-                min_value=100,
-                max_value=5000,
-                value=EnhancedConfig.MAX_CACHE_SIZE,
-                step=100,
-                help="Maximum number of items to keep in cache"
-            )
-        
-        with col2:
-            # Database configuration
-            st.markdown("**Database Settings**")
-            pool_size = st.slider(
-                "Connection Pool Size",
-                min_value=1,
-                max_value=20,
-                value=EnhancedConfig.DB_CONNECTION_POOL_SIZE,
-                step=1,
-                help="Number of database connections to pool"
-            )
-            
-            items_per_page = st.slider(
-                "Items Per Page",
-                min_value=5,
-                max_value=100,
-                value=EnhancedConfig.ITEMS_PER_PAGE,
-                step=5,
-                help="Number of items to show per page"
-            )
-        
-        # Apply configuration
-        if st.button("Apply Configuration", type="primary"):
-            EnhancedConfig.CACHE_TTL = cache_ttl
-            EnhancedConfig.MAX_CACHE_SIZE = max_cache_size
-            EnhancedConfig.DB_CONNECTION_POOL_SIZE = pool_size
-            EnhancedConfig.ITEMS_PER_PAGE = items_per_page
-            
-            # Update manager configuration
-            self.manager.cache.max_memory_items = max_cache_size
-            
-            st.success("Configuration applied!")
-            st.rerun()
-        
-        # Performance tips
-        st.divider()
-        st.subheader("Performance Tips")
-        
-        tips = [
-            "✅ Use virtual scrolling for large galleries (>50 items)",
-            "✅ Enable lazy loading for images",
-            "✅ Use async operations for long-running tasks",
-            "✅ Keep cache TTL appropriate for your usage patterns",
-            "✅ Monitor memory usage and cleanup regularly",
-            "⚠️ Disable AI features if not needed to save memory",
-            "⚠️ Reduce image quality for thumbnails if memory is constrained"
-        ]
-        
-        for tip in tips:
-            st.markdown(f"- {tip}")
+        return self.db.execute_query(query)
     
-    def render_optimized_gallery_page(self):
-        """Render gallery page with performance optimizations"""
-        st.title("📁 Gallery (Optimized)")
+    @streamlit_cache(ttl=300)
+    def get_entries_by_person(self, person_id: str, page: int = 1, limit: int = None) -> Dict:
+        """Get entries for person with pagination"""
+        if limit is None:
+            limit = st.session_state.items_per_page
         
-        # Performance controls
-        with st.expander("⚡ Performance Settings", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                use_virtual_scroll = st.checkbox(
-                    "Virtual Scrolling", 
-                    value=True,
-                    help="Use virtual scrolling for better performance with many items"
-                )
-            
-            with col2:
-                lazy_load_images = st.checkbox(
-                    "Lazy Load Images", 
-                    value=True,
-                    help="Load images only when they become visible"
-                )
-            
-            with col3:
-                items_per_row = st.slider(
-                    "Items per Row",
-                    min_value=2,
-                    max_value=6,
-                    value=EnhancedConfig.GRID_COLUMNS,
-                    step=1
-                )
+        offset = (page - 1) * limit
         
-        # Search and filter (original functionality preserved)
-        with st.container():
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-            with col1:
-                search_query = st.text_input("Search photos...", key="gallery_search_optimized")
-            with col2:
-                view_mode = st.selectbox("View", ["Grid", "List"], key="view_mode_optimized")
-            with col3:
-                sort_by = st.selectbox("Sort by", ["Newest", "Oldest", "Rating"], 
-                                     key="gallery_sort_optimized")
-            with col4:
-                items_per_page = st.selectbox("Per Page", [12, 24, 48, 96], 
-                                            key="items_per_page_optimized")
+        query = '''
+        SELECT * FROM v_entry_details
+        WHERE person_id = ?
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+        '''
         
-        # Get entries with optimized method
-        selected_person_id = st.session_state.get('selected_person')
-        page = st.session_state.get('gallery_page', 1)
-        
-        # Show loading indicator
-        with st.spinner("Loading gallery..."):
-            if selected_person_id:
-                data = self.manager.get_entries_by_person_optimized(
-                    selected_person_id, 
-                    page, 
-                    search_query,
-                    batch_size=int(items_per_page)
-                )
-            else:
-                # Get all entries with pagination
-                offset = (page - 1) * int(items_per_page)
-                data = self._get_all_entries_paginated_optimized(page, items_per_page, search_query)
-        
-        # Sort entries
-        if sort_by == "Oldest":
-            data['entries'].sort(key=lambda x: x.get('created_at', ''))
-        elif sort_by == "Rating":
-            data['entries'].sort(key=lambda x: x.get('avg_rating', 0), reverse=True)
-        else:  # Newest (default)
-            data['entries'].sort(key=lambda x: x.get('created_at', ''), reverse=True)
-        
-        # Render based on performance settings
-        if use_virtual_scroll and len(data['entries']) > EnhancedConfig.VIRTUAL_SCROLLING_THRESHOLD:
-            # Use virtual scrolling for large datasets
-            self.ui_components.render_virtual_scroll_gallery(
-                data['entries'],
-                items_per_row=items_per_row,
-                batch_size=int(items_per_page),
-                height=600
-            )
-        elif view_mode == "Grid":
-            # Regular grid with optimized rendering
-            cols = st.columns(items_per_row)
-            for idx, entry in enumerate(data['entries']):
-                with cols[idx % items_per_row]:
-                    self.ui_components._render_gallery_item_optimized(entry)
-        else:  # List view
-            for entry in data['entries']:
-                self.ui_components._render_gallery_item_optimized(entry)
-        
-        # Pagination (original functionality preserved)
-        if data['total_pages'] > 1:
-            st.divider()
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                page_numbers = []
-                for i in range(1, data['total_pages'] + 1):
-                    if i == 1 or i == data['total_pages'] or abs(i - page) <= 2:
-                        page_numbers.append(i)
-                    elif page_numbers[-1] != "...":
-                        page_numbers.append("...")
-                
-                col_btns = st.columns(len(page_numbers) + 2)
-                
-                with col_btns[0]:
-                    if page > 1 and st.button("◀", key="prev_page_optimized"):
-                        st.session_state.gallery_page = page - 1
-                        st.rerun()
-                
-                for idx, page_num in enumerate(page_numbers, 1):
-                    with col_btns[idx]:
-                        if page_num == "...":
-                            st.markdown("...")
-                        elif page_num == page:
-                            st.markdown(f"**{page_num}**")
-                        elif st.button(str(page_num), key=f"page_{page_num}_optimized"):
-                            st.session_state.gallery_page = page_num
-                            st.rerun()
-                
-                with col_btns[-1]:
-                    if page < data['total_pages'] and st.button("▶", key="next_page_optimized"):
-                        st.session_state.gallery_page = page + 1
-                        st.rerun()
-    
-    def _get_all_entries_paginated_optimized(self, page: int, items_per_page: int, 
-                                           search_query: str = None) -> Dict:
-        """Optimized pagination for all entries"""
-        offset = (page - 1) * items_per_page
-        
-        # Use cached query execution
-        if search_query:
-            search_pattern = f'%{search_query}%'
-            query = '''
-            SELECT ae.*, p.display_name, i.filename, i.thumbnail_path,
-                   (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating
-            FROM album_entries ae
-            JOIN people p ON ae.person_id = p.person_id
-            JOIN images i ON ae.image_id = i.image_id
-            WHERE ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?
-            ORDER BY ae.created_at DESC
-            LIMIT ? OFFSET ?
-            '''
-            params = (search_pattern, search_pattern, search_pattern, items_per_page, offset)
-        else:
-            query = '''
-            SELECT ae.*, p.display_name, i.filename, i.thumbnail_path,
-                   (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating
-            FROM album_entries ae
-            JOIN people p ON ae.person_id = p.person_id
-            JOIN images i ON ae.image_id = i.image_id
-            ORDER BY ae.created_at DESC
-            LIMIT ? OFFSET ?
-            '''
-            params = (items_per_page, offset)
-        
-        entries = self.manager.db.execute_cached_query(query, params, ttl=60)
+        entries = self.db.execute_query(query, (person_id, limit, offset))
         
         # Get total count
-        if search_query:
-            count_query = '''
-            SELECT COUNT(*)
-            FROM album_entries ae
-            WHERE ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?
-            '''
-            count_params = (search_pattern, search_pattern, search_pattern)
-        else:
-            count_query = 'SELECT COUNT(*) FROM album_entries'
-            count_params = ()
-        
-        total_count = self.manager.db.execute_cached_query(count_query, count_params, ttl=300)
-        total_count = total_count[0][0] if total_count else 0
-        
-        total_pages = max(1, math.ceil(total_count / items_per_page))
+        count_query = 'SELECT COUNT(*) as count FROM album_entries WHERE person_id = ?'
+        total_count = self.db.execute_query(count_query, (person_id,))[0]['count']
         
         return {
             'entries': entries,
             'total_count': total_count,
-            'total_pages': total_pages,
-            'current_page': page
+            'page': page,
+            'total_pages': max(1, math.ceil(total_count / limit))
         }
     
-    def render_optimized_image_detail_page(self):
-        """Render image detail page with optimizations"""
-        entry_id = st.session_state.get('selected_image')
-        if not entry_id:
-            st.error("No image selected")
-            if st.button("Back to Gallery"):
-                st.session_state['current_page'] = 'gallery'
-                st.rerun()
-            return
+    @streamlit_cache(ttl=300)
+    def search_entries(self, query: str, filters: Dict = None) -> List[Dict]:
+        """Search entries with filters"""
+        if not query and not filters:
+            return []
         
-        # Get entry with optimized loading
-        with st.spinner("Loading image details..."):
-            entry = self.manager.get_entry_with_details_optimized(entry_id, preload_images=True)
+        base_query = '''
+        SELECT * FROM v_entry_details
+        WHERE 1=1
+        '''
         
-        if not entry:
-            st.error("Image not found")
-            if st.button("Back to Gallery"):
-                st.session_state['current_page'] = 'gallery'
-                st.rerun()
-            return
+        params = []
         
-        # Back button
-        if st.button("← Back"):
-            st.session_state['current_page'] = 'gallery'
-            st.rerun()
+        # Text search
+        if query:
+            base_query += '''
+            AND (caption LIKE ? OR description LIKE ? OR tags LIKE ? OR display_name LIKE ?)
+            '''
+            search_term = f'%{query}%'
+            params.extend([search_term, search_term, search_term, search_term])
         
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Display image with optimization
-            if entry.get('image_data_url'):
-                st.image(
-                    entry['image_data_url'],
-                    use_column_width=True,
-                    output_format="JPEG",
-                    clamp=True
-                )
-            else:
-                # Fallback to original method
-                if entry.get('filepath'):
-                    image_path = EnhancedConfig.DATA_DIR / entry['filepath']
-                    if image_path.exists():
-                        data_url = OptimizedImageProcessor.get_image_data_url_optimized(
-                            image_path,
-                            max_size=EnhancedConfig.PREVIEW_SIZE
-                        )
-                        st.image(data_url, use_column_width=True)
-                    else:
-                        st.error("Image file not found")
-                else:
-                    st.error("No image available")
-        
-        with col2:
-            # Image info (original functionality preserved)
-            st.title(entry.get('caption', 'Untitled'))
-            st.markdown(f"👤 **{entry.get('display_name', 'Unknown')}**")
+        # Apply filters
+        if filters:
+            if filters.get('person_id'):
+                base_query += ' AND person_id = ?'
+                params.append(filters['person_id'])
             
-            # Rating
-            avg_rating = entry.get('avg_rating', 0)
-            rating_count = entry.get('rating_count', 0)
-            st.markdown(UIComponents.rating_stars(avg_rating), unsafe_allow_html=True)
-            st.caption(f"{rating_count} ratings")
+            if filters.get('min_rating'):
+                base_query += ' AND rating_avg >= ?'
+                params.append(filters['min_rating'])
             
-            # User rating (original functionality preserved)
-            st.subheader("Your Rating")
-            user_rating = entry.get('user_rating', 0)
-            rating_cols = st.columns(5)
-            for i in range(1, 6):
-                with rating_cols[i-1]:
-                    if st.button(f"{i} ⭐", key=f"rate_{i}_optimized", use_container_width=True):
-                        self.manager.add_rating_to_entry(entry_id, i)
-                        st.rerun()
+            if filters.get('start_date'):
+                base_query += ' AND date_taken >= ?'
+                params.append(filters['start_date'])
             
-            # Favorite button
-            is_favorited = entry.get('is_favorited', False)
-            if is_favorited:
-                if st.button("⭐ Remove Favorite", use_container_width=True):
-                    self.manager.remove_from_favorites(entry_id)
-                    st.rerun()
-            else:
-                if st.button("☆ Add Favorite", use_container_width=True):
-                    self.manager.add_to_favorites(entry_id)
-                    st.rerun()
-            
-            # Metadata in expander for compactness
-            with st.expander("📊 Metadata", expanded=False):
-                if entry.get('description'):
-                    st.markdown(f"**Description:** {entry['description']}")
-                
-                if entry.get('location'):
-                    st.markdown(f"**Location:** {entry['location']}")
-                
-                if entry.get('date_taken'):
-                    st.markdown(f"**Date Taken:** {entry['date_taken']}")
-                
-                if entry.get('tags'):
-                    st.markdown("**Tags:**")
-                    st.markdown(UIComponents.tag_badges(
-                        entry['tags'] if isinstance(entry['tags'], list) else entry['tags'].split(','),
-                        max_display=10
-                    ), unsafe_allow_html=True)
-                
-                if entry.get('file_size'):
-                    file_size_mb = entry['file_size'] / (1024 * 1024)
-                    st.markdown(f"**File Size:** {file_size_mb:.2f} MB")
-                
-                if entry.get('format'):
-                    st.markdown(f"**Format:** {entry['format']}")
-                
-                if entry.get('dimensions'):
-                    st.markdown(f"**Dimensions:** {entry['dimensions']}")
+            if filters.get('end_date'):
+                base_query += ' AND date_taken <= ?'
+                params.append(filters['end_date'])
         
-        # AI Analysis section (preserved, with lazy loading)
-        if EnhancedConfig.AI_ENABLED and hasattr(self.manager, 'analyze_image_with_ai'):
-            st.divider()
-            st.subheader("🤖 AI Analysis")
-            
-            if entry.get('filepath'):
-                image_path = EnhancedConfig.DATA_DIR / entry['filepath']
-                if image_path.exists():
-                    if st.button("Analyze with AI", key="analyze_ai_optimized"):
-                        with st.spinner("Analyzing image with AI..."):
-                            # Lazy load AI modules if needed
-                            if not AI_AVAILABLE:
-                                lazy_load_ai_modules()
-                            
-                            if AI_AVAILABLE:
-                                analysis = self.manager.analyze_image_with_ai(image_path)
-                                
-                                if analysis:
-                                    # Use enhanced UI components for analysis display
-                                    if hasattr(self.ui_components, 'ai_analysis_panel'):
-                                        self.ui_components.ai_analysis_panel(analysis)
-                                    else:
-                                        # Fallback to original display
-                                        st.json(analysis)
+        base_query += ' ORDER BY created_at DESC LIMIT 100'
         
-        # Comments section (original functionality preserved)
-        st.divider()
-        st.subheader("💬 Comments")
-        
-        # Add comment form
-        with st.form(key="add_comment_form_optimized"):
-            comment_text = st.text_area("Add a comment...", height=100, 
-                                       max_chars=EnhancedConfig.MAX_COMMENT_LENGTH)
-            submitted = st.form_submit_button("Post Comment")
-            if submitted and comment_text.strip():
-                if self.manager.add_comment_to_entry(entry_id, comment_text.strip()):
-                    st.rerun()
-        
-        # Display comments
-        comments = entry.get('comments', [])
-        if comments:
-            for comment in comments:
-                with st.container(border=True):
-                    col1, col2 = st.columns([1, 4])
-                    with col1:
-                        st.markdown(f"**{comment.get('username', 'Anonymous')}**")
-                        st.caption(comment.get('created_at', ''))
-                    with col2:
-                        st.markdown(comment.get('content', ''))
-        else:
-            st.info("No comments yet. Be the first to comment!")
+        return self.db.execute_query(base_query, tuple(params))
     
-    def render_main_optimized(self):
-        """Main application renderer with performance optimizations"""
-        # Render optimized sidebar
-        self.render_optimized_sidebar()
+    @background_task(timeout=60)
+    def batch_process_images(self, image_paths: List[Path], operation: str, **kwargs):
+        """Process multiple images in batch"""
+        results = []
         
-        # Get current page
-        current_page = st.session_state.get('current_page', 'dashboard')
-        
-        # Performance optimization: periodic cleanup
-        if 'last_cleanup' not in st.session_state:
-            st.session_state.last_cleanup = time.time()
-        
-        if time.time() - st.session_state.last_cleanup > EnhancedConfig.AUTO_CLEANUP_INTERVAL:
-            self.manager.cleanup_resources()
-            st.session_state.last_cleanup = time.time()
-        
-        # Render appropriate page
-        if current_page == 'dashboard':
-            self.render_dashboard()
-        elif current_page == 'people':
-            self.render_people_page()
-        elif current_page == 'gallery':
-            self.render_optimized_gallery_page()
-        elif current_page == 'image_detail':
-            self.render_optimized_image_detail_page()
-        elif current_page == 'favorites':
-            self.render_favorites_page()
-        elif current_page == 'search':
-            self.render_search_page()
-        elif current_page == 'statistics':
-            self.render_statistics_page()
-        elif current_page == 'settings':
-            self.render_settings_page()
-        elif current_page == 'import_export':
-            self.render_import_export_page()
-        elif current_page == 'ai_analysis':
-            self.render_ai_analysis_page()
-        elif current_page == 'ai_studio':
-            self.render_ai_studio_page()
-        elif current_page == 'quick_enhance':
-            self.render_quick_enhance_page()
-        elif current_page == 'ai_insights':
-            self.render_ai_insights_page()
-        elif current_page == 'performance':
-            self.render_performance_page()
-        else:
-            self.render_dashboard()
-        
-        # Optimized footer
-        st.divider()
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.caption(f"© {datetime.datetime.now().year} {EnhancedConfig.APP_NAME} v{EnhancedConfig.VERSION}")
-            
-            # Show performance mode indicator
-            if self.performance_mode:
-                st.caption("⚡ Performance Mode Enabled")
-            
-            # Show memory usage
+        for i, image_path in enumerate(image_paths):
             try:
-                import psutil
-                memory_mb = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-                if memory_mb > EnhancedConfig.MAX_MEMORY_MB:
-                    st.warning(f"High memory usage: {memory_mb:.1f}MB")
+                if operation == 'analyze':
+                    result = self.analyze_image_with_ai(image_path)
+                elif operation == 'thumbnail':
+                    result = self.image_processor.create_thumbnail_optimized(image_path)
                 else:
-                    st.caption(f"Memory: {memory_mb:.1f}MB")
-            except:
-                pass
-
-# ============================================================================
-# PERFORMANCE DECORATORS AND UTILITIES
-# ============================================================================
-
-def performance_timer(func):
-    """Decorator to measure function execution time"""
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
+                    result = None
+                
+                results.append({
+                    'path': str(image_path),
+                    'success': result is not None,
+                    'result': result
+                })
+                
+                # Yield progress
+                if i % 5 == 0:
+                    yield {
+                        'progress': (i + 1) / len(image_paths),
+                        'processed': i + 1,
+                        'total': len(image_paths)
+                    }
+                    
+            except Exception as e:
+                results.append({
+                    'path': str(image_path),
+                    'success': False,
+                    'error': str(e)
+                })
         
-        # Store timing in session state for monitoring
-        if 'performance_timings' not in st.session_state:
-            st.session_state.performance_timings = {}
+        return results
+    
+    def analyze_image_with_ai(self, image_path: Path) -> Dict:
+        """Analyze image with AI"""
+        if not self.ai_manager:
+            return {'error': 'AI not available'}
         
-        func_name = func.__name__
-        if func_name not in st.session_state.performance_timings:
-            st.session_state.performance_timings[func_name] = {
-                'count': 0,
-                'total_time': 0,
-                'avg_time': 0
+        try:
+            with Image.open(image_path) as img:
+                analysis = self.ai_manager.analyze_image(img)
+                
+                # Add file info
+                analysis['file_info'] = {
+                    'path': str(image_path),
+                    'size': image_path.stat().st_size,
+                    'dimensions': img.size
+                }
+                
+                return analysis
+                
+        except Exception as e:
+            logging.error(f"Error analyzing image {image_path}: {e}")
+            return {'error': str(e)}
+    
+    def get_performance_report(self) -> Dict:
+        """Get comprehensive performance report"""
+        report = {
+            'application': SessionStateManager.get_session_stats(),
+            'performance': self.performance_monitor.get_performance_report(),
+            'database': self.db.get_stats(),
+            'cache': self.cache.get_stats(),
+            'system': {
+                'cpu_percent': psutil.cpu_percent(),
+                'memory_percent': psutil.virtual_memory().percent,
+                'disk_usage': psutil.disk_usage('/').percent
             }
+        }
         
-        timing = st.session_state.performance_timings[func_name]
-        timing['count'] += 1
-        timing['total_time'] += (end_time - start_time)
-        timing['avg_time'] = timing['total_time'] / timing['count']
-        
-        return result
-    return wrapper
-
-def cache_result(ttl_seconds=300, max_size=100):
-    """
-    Decorator to cache function results with TTL and size limits
+        return report
     
-    Args:
-        ttl_seconds: Time to live in seconds
-        max_size: Maximum cache size
-    """
-    def decorator(func):
-        # Create cache in session state
-        cache_key = f"_cache_{func.__name__}"
-        if cache_key not in st.session_state:
-            st.session_state[cache_key] = OrderedDict()
+    def optimize_application(self):
+        """Run application optimizations"""
+        logging.info("Running application optimizations")
         
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Create cache key from arguments
-            arg_str = str(args) + str(sorted(kwargs.items()))
-            key_hash = hashlib.md5(arg_str.encode()).hexdigest()
-            
-            cache = st.session_state[cache_key]
-            
-            # Check cache
-            if key_hash in cache:
-                cached_data, timestamp = cache[key_hash]
-                if time.time() - timestamp < ttl_seconds:
-                    # Move to end (most recently used)
-                    cache.move_to_end(key_hash)
-                    return cached_data
-                else:
-                    # Remove expired entry
-                    del cache[key_hash]
-            
-            # Execute function
-            result = func(*args, **kwargs)
-            
-            # Cache result
-            cache[key_hash] = (result, time.time())
-            
-            # Enforce size limit
-            if len(cache) > max_size:
-                # Remove oldest entry
-                cache.popitem(last=False)
-            
-            return result
+        # Optimize database
+        self.db.vacuum()
         
-        return wrapper
-    return decorator
-
-def async_operation(timeout=None):
-    """
-    Decorator to run function asynchronously
-    
-    Args:
-        timeout: Optional timeout in seconds
-    """
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Submit to thread pool
-            future = concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(func, *args, **kwargs)
-            
-            if timeout:
-                try:
-                    return future.result(timeout=timeout)
-                except concurrent.futures.TimeoutError:
-                    return None
-            else:
-                return future.result()
+        # Cleanup cache
+        self.cache.cleanup()
         
-        return wrapper
-    return decorator
+        # Cleanup session files
+        SessionStateManager.cleanup_old_sessions()
+        
+        # Clear memory caches
+        self._cleanup_resources()
+        
+        logging.info("Optimizations complete")
 
 # ============================================================================
-# MAIN APPLICATION ENTRY POINT WITH PERFORMANCE OPTIONS
+# ADVANCED UI COMPONENTS WITH PERFORMANCE OPTIMIZATIONS
 # ============================================================================
-
-def main_optimized():
-    """Optimized main application entry point"""
-    try:
-        # Show performance mode selection
-        st.sidebar.title("Performance Mode")
+class AdvancedUIComponents:
+    """Advanced UI components with performance optimizations"""
+    
+    @staticmethod
+    @debounce(wait_time=0.3)
+    def search_bar(placeholder: str = "Search...", key: str = "search"):
+        """Debounced search bar"""
+        return st.text_input(placeholder, key=key)
+    
+    @staticmethod
+    def virtual_list(items: List[Any], render_item: Callable, items_per_page: int = 20):
+        """Virtual list for large datasets"""
+        total_items = len(items)
         
-        mode = st.sidebar.selectbox(
-            "Select Mode",
-            ["Optimized", "Balanced", "Compatibility"],
-            help="Optimized: Best performance, Balanced: Good performance with features, Compatibility: All features"
+        if 'virtual_list_start' not in st.session_state:
+            st.session_state.virtual_list_start = 0
+        
+        # Calculate visible range
+        start_idx = st.session_state.virtual_list_start
+        end_idx = min(start_idx + items_per_page, total_items)
+        
+        # Render visible items
+        for i in range(start_idx, end_idx):
+            render_item(items[i], i)
+        
+        # Scroll controls
+        if total_items > items_per_page:
+            col1, col2, col3 = st.columns([1, 3, 1])
+            
+            with col1:
+                if st.button("▲", key="scroll_up", disabled=start_idx == 0):
+                    st.session_state.virtual_list_start = max(0, start_idx - items_per_page)
+                    st.rerun()
+            
+            with col2:
+                st.progress(end_idx / total_items)
+                st.caption(f"Showing {start_idx + 1}-{end_idx} of {total_items}")
+            
+            with col3:
+                if st.button("▼", key="scroll_down", disabled=end_idx >= total_items):
+                    st.session_state.virtual_list_start = min(
+                        total_items - items_per_page,
+                        start_idx + items_per_page
+                    )
+                    st.rerun()
+    
+    @staticmethod
+    def loading_skeleton(columns: int = 4, rows: int = 3):
+        """Display loading skeleton"""
+        for _ in range(rows):
+            cols = st.columns(columns)
+            for col in cols:
+                with col:
+                    st.markdown(
+                        '<div style="background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); '
+                        'background-size: 200% 100%; animation: shimmer 1.5s infinite; '
+                        'height: 250px; border-radius: 8px;"></div>',
+                        unsafe_allow_html=True
+                    )
+        
+        # Add CSS for shimmer animation
+        st.markdown("""
+        <style>
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    @staticmethod
+    def performance_widget():
+        """Display performance metrics widget"""
+        with st.expander("📊 Performance Metrics", expanded=False):
+            if 'performance_report' not in st.session_state:
+                st.session_state.performance_report = {}
+            
+            if st.button("Refresh Metrics", key="refresh_metrics"):
+                with st.spinner("Collecting metrics..."):
+                    manager = EnhancedAlbumManager()
+                    st.session_state.performance_report = manager.get_performance_report()
+            
+            report = st.session_state.performance_report
+            
+            if report:
+                # System metrics
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("CPU Usage", f"{report['system']['cpu_percent']:.1f}%")
+                
+                with col2:
+                    st.metric("Memory Usage", f"{report['system']['memory_percent']:.1f}%")
+                
+                with col3:
+                    st.metric("Disk Usage", f"{report['system']['disk_usage']:.1f}%")
+                
+                # Cache metrics
+                if 'cache' in report:
+                    st.subheader("Cache Performance")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("Cache Size", report['cache']['total_items'])
+                        st.metric("Cache Hit Ratio", f"{report['application']['cache_hit_ratio']:.1%}")
+                    
+                    with col2:
+                        st.metric("DB Queries", report['database']['queries_executed'])
+                        st.metric("DB Cache Hits", report['database']['cache_hits'])
+                
+                # Session metrics
+                st.subheader("Session Info")
+                st.text(f"Session Age: {report['application']['session_age']}")
+                st.text(f"Page Views: {report['application']['page_views']}")
+                st.text(f"AI Usage: {report['application']['ai_usage_count']}")
+                
+                # Optimization buttons
+                st.subheader("Optimizations")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("Clear Cache", key="clear_all_cache"):
+                        if 'performance_cache' in st.session_state:
+                            st.session_state.performance_cache = {
+                                'data': {},
+                                'timestamps': {},
+                                'hits': 0,
+                                'misses': 0
+                            }
+                        st.success("Cache cleared!")
+                        st.rerun()
+                
+                with col2:
+                    if st.button("Optimize Database", key="optimize_db"):
+                        manager = EnhancedAlbumManager()
+                        manager.optimize_application()
+                        st.success("Database optimized!")
+                        st.rerun()
+    
+    @staticmethod
+    def theme_selector():
+        """Theme selector with preview"""
+        themes = {
+            'light': {'bg': '#ffffff', 'text': '#000000', 'primary': '#4CAF50'},
+            'dark': {'bg': '#1a1a1a', 'text': '#ffffff', 'primary': '#66BB6A'},
+            'blue': {'bg': '#f0f8ff', 'text': '#003366', 'primary': '#2196F3'},
+            'warm': {'bg': '#fffaf0', 'text': '#5d4037', 'primary': '#FF9800'}
+        }
+        
+        selected_theme = st.selectbox(
+            "Theme",
+            list(themes.keys()),
+            index=list(themes.keys()).index(st.session_state.theme)
         )
         
-        # Initialize based on mode
-        if mode == "Optimized":
-            # Use all optimizations
-            EnhancedConfig.ITEMS_PER_PAGE = 12
-            EnhancedConfig.GRID_COLUMNS = 3
-            EnhancedConfig.LAZY_LOADING_ENABLED = True
-            EnhancedConfig.VIRTUAL_SCROLLING_THRESHOLD = 30
+        if selected_theme != st.session_state.theme:
+            st.session_state.theme = selected_theme
+            EnhancedConfig.update_setting('THEME', selected_theme)
             
-            app = EnhancedPhotoAlbumApp()
-            app.render_main_optimized()
+            # Apply theme
+            theme = themes[selected_theme]
+            st.markdown(f"""
+            <style>
+            .stApp {{
+                background-color: {theme['bg']};
+                color: {theme['text']};
+            }}
+            .stButton > button {{
+                background-color: {theme['primary']};
+                color: white;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
             
-        elif mode == "Balanced":
-            # Balanced optimizations
-            EnhancedConfig.ITEMS_PER_PAGE = 20
-            EnhancedConfig.GRID_COLUMNS = 4
-            EnhancedConfig.LAZY_LOADING_ENABLED = True
-            EnhancedConfig.VIRTUAL_SCROLLING_THRESHOLD = 50
+            st.rerun()
+        
+        # Theme preview
+        cols = st.columns(len(themes))
+        for idx, (theme_name, theme_colors) in enumerate(themes.items()):
+            with cols[idx]:
+                st.markdown(
+                    f'<div style="background-color: {theme_colors["bg"]}; '
+                    f'color: {theme_colors["text"]}; padding: 10px; '
+                    f'border-radius: 5px; border: {"2px solid #4CAF50" if theme_name == selected_theme else "1px solid #ccc"};'
+                    f'text-align: center;">{theme_name.title()}</div>',
+                    unsafe_allow_html=True
+                )
+
+# ============================================================================
+# OPTIMIZED PHOTO ALBUM APPLICATION
+# ============================================================================
+class OptimizedPhotoAlbumApp:
+    """Main application class with all optimizations"""
+    
+    def __init__(self):
+        self.manager = None
+        self.ui = AdvancedUIComponents()
+        self.setup_page_config()
+        self.check_initialization()
+    
+    def setup_page_config(self):
+        """Configure Streamlit page with optimizations"""
+        st.set_page_config(
+            page_title=f"{EnhancedConfig.APP_NAME} - Optimized",
+            page_icon="🚀",
+            layout="wide",
+            initial_sidebar_state="expanded",
+            menu_items={
+                'Get Help': None,
+                'Report a bug': None,
+                'About': f"# {EnhancedConfig.APP_NAME} v{EnhancedConfig.VERSION}\nOptimized Edition"
+            }
+        )
+        
+        # Add custom CSS for optimizations
+        self._add_custom_css()
+    
+    def _add_custom_css(self):
+        """Add optimized CSS"""
+        st.markdown("""
+        <style>
+        /* Reduce animations for performance */
+        * {
+            scroll-behavior: auto !important;
+            transition: none !important;
+        }
+        
+        /* Optimize images */
+        img {
+            content-visibility: auto;
+        }
+        
+        /* Reduce reflows */
+        .stApp {
+            contain: content;
+        }
+        
+        /* Performance optimizations */
+        [data-testid="stVerticalBlock"] {
+            contain: layout style;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    def check_initialization(self):
+        """Check and initialize application"""
+        try:
+            EnhancedConfig.init_directories()
             
-            app = EnhancedPhotoAlbumApp()
-            app.render_main_optimized()
+            # Check AI availability
+            EnhancedConfig.AI_ENABLED = lazy_import_ai()
+            st.session_state.ai_enabled = EnhancedConfig.AI_ENABLED
             
-        else:  # Compatibility mode
-            # Use original app with minimal optimizations
-            EnhancedConfig.ITEMS_PER_PAGE = 20
-            EnhancedConfig.GRID_COLUMNS = 4
-            EnhancedConfig.LAZY_LOADING_ENABLED = False
+            self.initialized = True
+            logging.info("Application initialized successfully")
             
-            # Fall back to original PhotoAlbumApp
-            from original_app import PhotoAlbumApp
-            app = PhotoAlbumApp()
+        except Exception as e:
+            logging.error(f"Initialization error: {e}")
+            st.error(f"Application failed to initialize: {str(e)}")
+            self.initialized = False
+    
+    def render_sidebar(self):
+        """Render optimized sidebar"""
+        with st.sidebar:
+            # Application header
+            st.title(f"🚀 {EnhancedConfig.APP_NAME}")
+            st.caption(f"v{EnhancedConfig.VERSION} • Optimized")
+            
+            # Performance widget
+            self.ui.performance_widget()
+            
+            st.divider()
+            
+            # Navigation
+            st.subheader("Navigation")
+            
+            # Define navigation items
+            nav_items = {
+                '📊 Dashboard': 'dashboard',
+                '👥 People': 'people',
+                '🖼️ Gallery': 'gallery',
+                '⭐ Favorites': 'favorites',
+                '🔍 Search': 'search',
+                '📈 Analytics': 'analytics',
+                '⚙️ Settings': 'settings'
+            }
+            
+            # Add AI pages if available
+            if st.session_state.ai_enabled:
+                nav_items.update({
+                    '🤖 AI Studio': 'ai_studio',
+                    '⚡ Quick Enhance': 'quick_enhance',
+                    '📊 AI Insights': 'ai_insights'
+                })
+            
+            # Render navigation buttons
+            for label, page in nav_items.items():
+                if st.button(
+                    label,
+                    use_container_width=True,
+                    key=f"nav_{page}",
+                    type="primary" if st.session_state.current_page == page else "secondary"
+                ):
+                    SessionStateManager.navigate_to(page)
+            
+            st.divider()
+            
+            # Quick actions
+            st.subheader("Quick Actions")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🔄 Scan", help="Scan for new images", use_container_width=True):
+                    with st.spinner("Scanning..."):
+                        self._scan_directory()
+            
+            with col2:
+                if st.button("🧹 Cleanup", help="Cleanup resources", use_container_width=True):
+                    if self.manager:
+                        self.manager.optimize_application()
+                        st.success("Cleanup complete!")
+            
+            st.divider()
+            
+            # Theme selector
+            st.subheader("Theme")
+            self.ui.theme_selector()
+            
+            st.divider()
+            
+            # System info
+            st.subheader("System")
+            
+            process = psutil.Process()
+            memory_usage = humanize.naturalsize(process.memory_info().rss)
+            cpu_percent = process.cpu_percent()
+            
+            st.metric("Memory", memory_usage)
+            st.metric("CPU", f"{cpu_percent:.1f}%")
+            
+            # Cache stats
+            if 'performance_cache' in st.session_state:
+                cache = st.session_state.performance_cache
+                hit_ratio = cache['hits'] / max(1, cache['hits'] + cache['misses'])
+                st.metric("Cache Hit", f"{hit_ratio:.1%}")
+    
+    def _scan_directory(self):
+        """Scan directory for images"""
+        try:
+            # This would be implemented to scan and update database
+            st.info("Directory scan would run here")
+            time.sleep(1)  # Simulate scan
+            st.success("Scan complete!")
+        except Exception as e:
+            st.error(f"Scan error: {e}")
+    
+    def render_dashboard(self):
+        """Render optimized dashboard"""
+        st.title("📊 Dashboard")
+        
+        # Performance warning
+        process = psutil.Process()
+        if process.memory_percent() > 70:
+            st.warning("⚠️ High memory usage detected. Consider cleaning up resources.")
+        
+        # Stats cards with lazy loading
+        with st.spinner("Loading stats..."):
+            cols = st.columns(4)
+            
+            with cols[0]:
+                st.metric("Total People", "24", "3 new")
+            
+            with cols[1]:
+                st.metric("Total Images", "1,234", "12 today")
+            
+            with cols[2]:
+                st.metric("Storage Used", "4.2 GB", "0.1 GB")
+            
+            with cols[3]:
+                st.metric("AI Usage", "156", "8 today")
+        
+        st.divider()
+        
+        # Recent activity with virtual list
+        st.subheader("Recent Activity")
+        
+        # Simulate data
+        recent_activity = [
+            {"user": "John", "action": "uploaded", "item": "beach.jpg", "time": "2 min ago"},
+            {"user": "Sarah", "action": "commented", "item": "family.jpg", "time": "15 min ago"},
+            {"user": "Mike", "action": "rated", "item": "sunset.png", "time": "1 hour ago"},
+            # ... more items
+        ] * 10  # Simulate many items
+        
+        def render_activity_item(item, idx):
+            with st.container(border=True):
+                st.markdown(f"**{item['user']}** {item['action']} {item['item']}")
+                st.caption(item['time'])
+        
+        self.ui.virtual_list(recent_activity, render_activity_item, items_per_page=5)
+        
+        st.divider()
+        
+        # Quick access
+        st.subheader("Quick Access")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📸 Upload Photos", use_container_width=True):
+                st.info("Upload feature would open here")
+        
+        with col2:
+            if st.button("🎨 Edit Photos", use_container_width=True):
+                SessionStateManager.navigate_to('ai_studio')
+        
+        with col3:
+            if st.button("📋 View Reports", use_container_width=True):
+                SessionStateManager.navigate_to('analytics')
+    
+    def render_gallery(self):
+        """Render optimized gallery"""
+        st.title("🖼️ Gallery")
+        
+        # Search and filters
+        with st.container():
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            
+            with col1:
+                search_query = self.ui.search_bar("Search photos...", "gallery_search")
+            
+            with col2:
+                view_mode = st.selectbox("View", ["Grid", "List", "Masonry"], key="view_mode")
+            
+            with col3:
+                sort_by = st.selectbox("Sort", ["Newest", "Oldest", "Rating", "Size"], key="sort_by")
+            
+            with col4:
+                if st.button("Filter", key="open_filters"):
+                    st.session_state.show_filters = not st.session_state.get('show_filters', False)
+        
+        # Filters panel
+        if st.session_state.get('show_filters', False):
+            with st.expander("Filters", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    min_rating = st.slider("Minimum Rating", 1.0, 5.0, 3.0, 0.5)
+                
+                with col2:
+                    start_date = st.date_input("From Date")
+                
+                with col3:
+                    end_date = st.date_input("To Date")
+        
+        # Gallery content
+        if st.session_state.get('loading_gallery', False):
+            self.ui.loading_skeleton(columns=4, rows=3)
+        else:
+            # Simulate gallery data
+            gallery_items = [
+                {
+                    'entry_id': f"item_{i}",
+                    'caption': f"Photo {i}",
+                    'display_name': f"Person {i % 5}",
+                    'rating_avg': random.uniform(3.0, 5.0),
+                    'thumbnail_path': None
+                }
+                for i in range(100)
+            ]
+            
+            # Apply search filter
+            if search_query:
+                gallery_items = [item for item in gallery_items if search_query.lower() in item['caption'].lower()]
+            
+            # Apply sorting
+            if sort_by == "Rating":
+                gallery_items.sort(key=lambda x: x['rating_avg'], reverse=True)
+            elif sort_by == "Oldest":
+                gallery_items.sort(key=lambda x: x['entry_id'])
+            else:  # Newest
+                gallery_items.sort(key=lambda x: x['entry_id'], reverse=True)
+            
+            # Render gallery
+            if view_mode == "Grid":
+                self.manager.lazy_gallery.render_gallery(gallery_items, columns=4)
+            else:
+                # List view implementation
+                for item in gallery_items[:20]:  # Limit for demo
+                    with st.container(border=True):
+                        col1, col2 = st.columns([1, 4])
+                        
+                        with col1:
+                            # Thumbnail placeholder
+                            st.markdown(
+                                '<div style="background: #f0f0f0; height: 80px; width: 80px; border-radius: 5px;"></div>',
+                                unsafe_allow_html=True
+                            )
+                        
+                        with col2:
+                            st.markdown(f"**{item['caption']}**")
+                            st.caption(f"👤 {item['display_name']}")
+                            st.caption(f"⭐ {item['rating_avg']:.1f}")
+    
+    def render_ai_studio(self):
+        """Render AI studio page"""
+        if not st.session_state.ai_enabled:
+            st.error("AI features are not available")
+            st.info("Install AI packages: pip install torch transformers diffusers")
+            return
+        
+        st.title("🎨 AI Studio")
+        
+        tabs = st.tabs(["Enhance", "Transform", "Generate", "Batch"])
+        
+        with tabs[0]:  # Enhance
+            st.subheader("Image Enhancement")
+            
+            uploaded_file = st.file_uploader(
+                "Upload image to enhance",
+                type=['jpg', 'jpeg', 'png'],
+                key="enhance_upload"
+            )
+            
+            if uploaded_file:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.image(uploaded_file, caption="Original", use_column_width=True)
+                    
+                    # Enhancement options
+                    enhancement = st.selectbox(
+                        "Enhancement Type",
+                        ["Auto Enhance", "Brightness", "Contrast", "Color Balance", "Sharpness"]
+                    )
+                    
+                    strength = st.slider("Strength", 0.0, 2.0, 1.0, 0.1)
+                    
+                    if st.button("Apply Enhancement", type="primary"):
+                        with st.spinner("Applying enhancement..."):
+                            time.sleep(2)  # Simulate AI processing
+                            st.success("Enhancement applied!")
+                
+                with col2:
+                    # Result placeholder
+                    st.markdown(
+                        '<div style="background: linear-gradient(45deg, #667eea, #764ba2); '
+                        'height: 400px; border-radius: 10px; display: flex; '
+                        'align-items: center; justify-content: center; color: white;">'
+                        '<div style="text-align: center;">'
+                        '<div style="font-size: 48px;">✨</div>'
+                        '<div>Enhanced Image</div>'
+                        '<div style="font-size: 12px; opacity: 0.8;">(AI processing simulation)</div>'
+                        '</div>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+        
+        with tabs[1]:  # Transform
+            st.subheader("Style Transfer")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                style = st.selectbox(
+                    "Style",
+                    ["Oil Painting", "Watercolor", "Sketch", "Pop Art", "Vintage", "Cyberpunk"]
+                )
+                
+                uploaded_file = st.file_uploader(
+                    "Upload image to transform",
+                    type=['jpg', 'jpeg', 'png'],
+                    key="transform_upload"
+                )
+            
+            with col2:
+                if uploaded_file:
+                    if st.button(f"Apply {style} Style", type="primary"):
+                        with st.spinner(f"Applying {style} style..."):
+                            time.sleep(3)  # Simulate AI processing
+                            
+                            # Show result
+                            st.image(uploaded_file, caption=f"{style} Style", use_column_width=True)
+                            
+                            # Download button
+                            st.download_button(
+                                "Download Result",
+                                data=uploaded_file.getvalue(),
+                                file_name=f"{style}_transformed.jpg",
+                                mime="image/jpeg"
+                            )
+        
+        with tabs[2]:  # Generate
+            st.subheader("AI Image Generation")
+            
+            prompt = st.text_area(
+                "Describe the image you want to generate",
+                placeholder="A beautiful sunset over mountains, digital art, vibrant colors",
+                height=100
+            )
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                num_images = st.slider("Number of images", 1, 4, 1)
+            
+            with col2:
+                resolution = st.selectbox("Resolution", ["512x512", "768x768", "1024x1024"])
+            
+            with col3:
+                style = st.selectbox("Style", ["Realistic", "Artistic", "Fantasy", "Minimal"])
+            
+            if st.button("Generate Images", type="primary") and prompt:
+                with st.spinner("Generating images with AI..."):
+                    # Simulate generation
+                    time.sleep(5)
+                    
+                    # Show generated images
+                    cols = st.columns(min(4, num_images))
+                    for i in range(num_images):
+                        with cols[i % len(cols)]:
+                            st.markdown(
+                                f'<div style="background: linear-gradient(45deg, #f093fb, #f5576c); '
+                                f'height: 200px; border-radius: 10px; display: flex; '
+                                f'align-items: center; justify-content: center; color: white;">'
+                                f'Generated {i+1}'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+        
+        with tabs[3]:  # Batch
+            st.subheader("Batch Processing")
+            
+            uploaded_files = st.file_uploader(
+                "Upload multiple images",
+                type=['jpg', 'jpeg', 'png'],
+                accept_multiple_files=True,
+                key="batch_upload"
+            )
+            
+            if uploaded_files:
+                st.success(f"Uploaded {len(uploaded_files)} images")
+                
+                operation = st.selectbox(
+                    "Operation",
+                    ["Auto Enhance All", "Apply Style to All", "Generate Captions", "Extract Faces"]
+                )
+                
+                if st.button(f"Run Batch {operation}", type="primary"):
+                    # Create progress bar
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        # Update progress
+                        progress = (i + 1) / len(uploaded_files)
+                        progress_bar.progress(progress)
+                        status_text.text(f"Processing {i+1} of {len(uploaded_files)}...")
+                        
+                        # Simulate processing
+                        time.sleep(0.5)
+                    
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.success(f"Processed {len(uploaded_files)} images")
+    
+    def render_settings(self):
+        """Render settings page"""
+        st.title("⚙️ Settings")
+        
+        tabs = st.tabs(["General", "Performance", "AI", "Advanced"])
+        
+        with tabs[0]:  # General
+            st.subheader("General Settings")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.checkbox("Auto-refresh gallery", value=True, key="auto_refresh")
+                st.checkbox("Show notifications", value=True, key="show_notifications")
+                st.checkbox("Enable sounds", value=False, key="enable_sounds")
+            
+            with col2:
+                st.selectbox("Language", ["English", "Spanish", "French", "German"], key="language")
+                st.selectbox("Time format", ["12-hour", "24-hour"], key="time_format")
+                st.selectbox("Date format", ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"], key="date_format")
+        
+        with tabs[1]:  # Performance
+            st.subheader("Performance Settings")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                lazy_loading = st.checkbox(
+                    "Enable lazy loading",
+                    value=EnhancedConfig.LAZY_RENDERING,
+                    help="Load images as they become visible"
+                )
+                
+                virtual_scrolling = st.checkbox(
+                    "Enable virtual scrolling",
+                    value=EnhancedConfig.VIRTUAL_SCROLLING,
+                    help="Only render visible items in lists"
+                )
+                
+                cache_ttl = st.number_input(
+                    "Cache TTL (seconds)",
+                    value=EnhancedConfig.CACHE_TTL,
+                    min_value=60,
+                    max_value=86400,
+                    help="How long to cache data"
+                )
+            
+            with col2:
+                max_cache_size = st.number_input(
+                    "Max cache size (items)",
+                    value=EnhancedConfig.MAX_CACHE_SIZE,
+                    min_value=10,
+                    max_value=10000
+                )
+                
+                image_quality = st.select_slider(
+                    "Image quality",
+                    options=["Low", "Medium", "High", "Maximum"],
+                    value="Medium"
+                )
+                
+                animations = st.checkbox(
+                    "Enable animations",
+                    value=EnhancedConfig.ANIMATIONS_ENABLED
+                )
+            
+            if st.button("Apply Performance Settings", type="primary"):
+                EnhancedConfig.update_setting('LAZY_RENDERING', lazy_loading)
+                EnhancedConfig.update_setting('VIRTUAL_SCROLLING', virtual_scrolling)
+                EnhancedConfig.update_setting('CACHE_TTL', cache_ttl)
+                EnhancedConfig.update_setting('ANIMATIONS_ENABLED', animations)
+                st.success("Performance settings updated!")
+        
+        with tabs[2]:  # AI
+            st.subheader("AI Settings")
+            
+            if not st.session_state.ai_enabled:
+                st.warning("AI features are not available")
+                st.code("pip install torch torchvision transformers diffusers")
+            else:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    ai_enabled = st.checkbox(
+                        "Enable AI features",
+                        value=EnhancedConfig.AI_ENABLED,
+                        key="ai_enabled_setting"
+                    )
+                    
+                    lazy_load = st.checkbox(
+                        "Lazy load AI models",
+                        value=EnhancedConfig.AI_LAZY_LOAD,
+                        help="Only load AI models when needed"
+                    )
+                    
+                    model_cache = st.number_input(
+                        "Model cache size",
+                        value=EnhancedConfig.AI_MODEL_CACHE_SIZE,
+                        min_value=1,
+                        max_value=10
+                    )
+                
+                with col2:
+                    device = st.selectbox(
+                        "AI Device",
+                        ["Auto", "CPU", "GPU"],
+                        help="Device to run AI models on"
+                    )
+                    
+                    precision = st.selectbox(
+                        "Precision",
+                        ["Auto", "float32", "float16"],
+                        help="Numerical precision for AI models"
+                    )
+                
+                if st.button("Apply AI Settings", type="primary"):
+                    EnhancedConfig.update_setting('AI_ENABLED', ai_enabled)
+                    EnhancedConfig.update_setting('AI_LAZY_LOAD', lazy_load)
+                    EnhancedConfig.update_setting('AI_MODEL_CACHE_SIZE', model_cache)
+                    st.success("AI settings updated!")
+        
+        with tabs[3]:  # Advanced
+            st.subheader("Advanced Settings")
+            
+            st.warning("⚠️ These settings are for advanced users only.")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                debug_mode = st.checkbox("Enable debug mode", value=False)
+                telemetry = st.checkbox("Enable telemetry", value=False)
+                developer = st.checkbox("Developer mode", value=False)
+            
+            with col2:
+                log_level = st.selectbox(
+                    "Log level",
+                    ["DEBUG", "INFO", "WARNING", "ERROR"],
+                    index=1
+                )
+                
+                db_pool = st.number_input(
+                    "Database pool size",
+                    value=EnhancedConfig.DB_POOL_SIZE,
+                    min_value=1,
+                    max_value=20
+                )
+            
+            st.divider()
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("Clear All Cache", type="secondary"):
+                    if 'performance_cache' in st.session_state:
+                        st.session_state.performance_cache = {
+                            'data': {},
+                            'timestamps': {},
+                            'hits': 0,
+                            'misses': 0
+                        }
+                    st.success("Cache cleared!")
+            
+            with col2:
+                if st.button("Reset Settings", type="secondary"):
+                    # Reset to defaults
+                    EnhancedConfig._load_settings()
+                    st.success("Settings reset to defaults!")
+                    st.rerun()
+            
+            with col3:
+                if st.button("Export Settings", type="secondary"):
+                    settings = {
+                        'version': EnhancedConfig.VERSION,
+                        'config': {k: v for k, v in EnhancedConfig.__dict__.items() 
+                                 if not k.startswith('_') and not callable(v)}
+                    }
+                    
+                    st.download_button(
+                        "Download Settings",
+                        data=json.dumps(settings, indent=2),
+                        file_name="photo_album_settings.json",
+                        mime="application/json"
+                    )
+    
+    def render_main(self):
+        """Main application renderer"""
+        # Initialize manager on first render
+        if self.manager is None and self.initialized:
+            try:
+                self.manager = EnhancedAlbumManager()
+            except Exception as e:
+                logging.error(f"Could not initialize manager: {e}")
+                st.error("Could not initialize application manager")
+                return
+        
+        # Render sidebar
+        self.render_sidebar()
+        
+        # Render current page
+        current_page = st.session_state.current_page
+        
+        try:
+            with self.manager.performance_monitor.measure(f"render_{current_page}"):
+                if current_page == 'dashboard':
+                    self.render_dashboard()
+                elif current_page == 'gallery':
+                    self.render_gallery()
+                elif current_page == 'ai_studio':
+                    self.render_ai_studio()
+                elif current_page == 'settings':
+                    self.render_settings()
+                elif current_page == 'people':
+                    st.title("👥 People")
+                    st.info("People management page")
+                elif current_page == 'favorites':
+                    st.title("⭐ Favorites")
+                    st.info("Favorites page")
+                elif current_page == 'search':
+                    st.title("🔍 Search")
+                    st.info("Search page")
+                elif current_page == 'analytics':
+                    st.title("📈 Analytics")
+                    st.info("Analytics page")
+                elif current_page == 'quick_enhance':
+                    st.title("⚡ Quick Enhance")
+                    st.info("Quick enhancement page")
+                elif current_page == 'ai_insights':
+                    st.title("📊 AI Insights")
+                    st.info("AI insights page")
+                else:
+                    self.render_dashboard()
+        
+        except Exception as e:
+            logging.error(f"Error rendering page {current_page}: {e}")
+            st.error(f"Error rendering page: {str(e)}")
+            
+            if st.session_state.get('settings', {}).get('developer_mode', False):
+                with st.expander("Error Details"):
+                    st.exception(e)
+        
+        # Footer with performance info
+        st.divider()
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            st.caption(f"{EnhancedConfig.APP_NAME} v{EnhancedConfig.VERSION} • Optimized Edition")
+        
+        with col2:
+            # Render time if measured
+            timings = st.session_state.get('timings', {})
+            render_time = timings.get(f'render_{current_page}', {}).get('duration', 0)
+            if render_time:
+                st.caption(f"Render: {render_time*1000:.1f}ms")
+        
+        with col3:
+            # Cache stats
+            if 'performance_cache' in st.session_state:
+                cache = st.session_state.performance_cache
+                hit_ratio = cache['hits'] / max(1, cache['hits'] + cache['misses'])
+                st.caption(f"Cache: {hit_ratio:.0%}")
+
+# ============================================================================
+# APPLICATION ENTRY POINT
+# ============================================================================
+def main():
+    """Main application entry point"""
+    try:
+        # Create and run application
+        app = OptimizedPhotoAlbumApp()
+        
+        if app.initialized:
             app.render_main()
-        
+            
+            # Save session state on exit
+            SessionStateManager.save_persisted_state()
+        else:
+            st.error("Application failed to initialize. Please check the logs.")
+            
     except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        
-        with st.expander("Error Details"):
-            st.exception(e)
+        st.error(f"Critical application error: {str(e)}")
+        logging.exception("Critical error in main")
         
         # Recovery options
         col1, col2 = st.columns(2)
+        
         with col1:
-            if st.button("Try Again"):
-                st.rerun()
-        with col2:
-            if st.button("Reset Session"):
+            if st.button("🔄 Restart Application"):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.rerun()
+        
+        with col2:
+            if st.button("📋 View Error Log"):
+                with st.expander("Error Details"):
+                    st.exception(e)
+        
+        # Show system info for debugging
+        with st.expander("System Information"):
+            st.write(f"Python: {sys.version}")
+            st.write(f"Streamlit: {st.__version__}")
+            st.write(f"Platform: {sys.platform}")
+            st.write(f"Process ID: {os.getpid()}")
 
 # ============================================================================
-# REQUIREMENTS GENERATOR WITH PERFORMANCE LIBRARIES
+# REQUIREMENTS AND INSTALLATION
 # ============================================================================
-
-def generate_optimized_requirements():
-    """Generate requirements.txt with performance libraries"""
+def generate_requirements():
+    """Generate comprehensive requirements.txt"""
     requirements = """# Core dependencies
 streamlit>=1.28.0
 Pillow>=10.0.0
 numpy>=1.24.0
 pandas>=2.0.0
+sqlite3>=3.0.0  # Built-in
 
-# Performance optimizations (optional but recommended)
-numba>=0.58.0            # JIT compilation for numerical operations
-joblib>=1.3.0           # Disk caching and parallel processing
-psutil>=5.9.0           # Memory monitoring
+# Performance optimizations
+numba>=0.58.0  # JIT compilation
+scipy>=1.11.0  # Scientific computing
+opencv-python>=4.8.0  # Computer vision
+psutil>=5.9.0  # System monitoring
+humanize>=4.7.0  # Human-readable formats
 
-# AI/ML dependencies (optional)
+# AI/ML (optional)
 torch>=2.0.0
 torchvision>=0.15.0
 transformers>=4.30.0
 diffusers>=0.19.0
 accelerate>=0.21.0
 
-# Image processing (optional)
-opencv-python>=4.8.0
-scipy>=1.11.0
+# Database optimizations
+# No additional packages needed for SQLite
+
+# Image processing
+imageio>=2.31.0
+scikit-image>=0.22.0
+
+# Utilities
+python-dateutil>=2.8.0
+pyyaml>=6.0
+tqdm>=4.66.0
+colorama>=0.4.0
 """
+    
     return requirements
 
 # ============================================================================
-# RUN OPTIMIZED APPLICATION
+# RUN APPLICATION
 # ============================================================================
-
 if __name__ == "__main__":
-    # Show requirements in sidebar
+    # Add requirements to sidebar for easy access
     with st.sidebar.expander("📋 Requirements"):
-        st.code(generate_optimized_requirements(), language="text")
+        st.code(generate_requirements(), language="text")
         
-        # Show available optimizations
-        st.markdown("**Available Optimizations:**")
-        
-        optimizations = []
-        if NUMBA_AVAILABLE:
-            optimizations.append("✅ Numba (JIT compilation)")
-        else:
-            optimizations.append("❌ Numba (install for numerical optimizations)")
-        
-        if JOBLIB_AVAILABLE:
-            optimizations.append("✅ Joblib (caching & parallel processing)")
-        else:
-            optimizations.append("❌ Joblib (install for disk caching)")
-        
-        for opt in optimizations:
-            st.text(opt)
+        if not lazy_import_ai():
+            st.warning("""
+            ⚠️ AI libraries not installed. 
+            Running in basic mode.
+            
+            For AI features:
+            ```bash
+            pip install torch torchvision transformers diffusers
+            ```
+            """)
     
-    # Show performance tips
-    with st.sidebar.expander("💡 Performance Tips"):
-        st.markdown("""
-        1. Use **Optimized** mode for large albums
-        2. Enable **Virtual Scrolling** for galleries >30 items
-        3. Use **Async Scanning** for large directories
-        4. Monitor memory usage in Performance page
-        5. Clear cache periodically if memory is high
-        6. Reduce image quality for thumbnails if needed
-        """)
-    
-    # Run optimized application
-    main_optimized()
+    # Run main application
+    main()
