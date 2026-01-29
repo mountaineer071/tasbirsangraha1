@@ -17,3 +17,4 @@ xformers
 triton
 replicate
 openai
+humanize
