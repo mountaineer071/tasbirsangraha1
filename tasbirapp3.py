@@ -1,6 +1,6 @@
 """
 COMPREHENSIVE WEB PHOTO & VIDEO ALBUM APPLICATION
-Version: 3.0.0 - Enhanced with Video Streaming & Password Protection
+Version: 3.1.0 - Enhanced with Video Streaming & Password Protection
 Features: Table of Contents, Image/Video Gallery, Comments, Ratings, Metadata Management, Search, Password Auth
 """
 import streamlit as st
@@ -44,23 +44,10 @@ except ImportError:
     st.warning("Video processing libraries not installed. Install with: pip install opencv-python moviepy")
 
 # ============================================================================
-# PASSWORD AUTHENTICATION
+# PASSWORD AUTHENTICATION - FIXED VERSION
 # ============================================================================
 def check_password():
     """Check if user has entered correct password based on website name"""
-    # Get the website name from Streamlit Cloud or environment variable
-    # For local testing, you can set an environment variable: SITE_NAME=your_site_name
-    site_name = os.environ.get("SITE_NAME", "")
-    
-    # If running locally or SITE_NAME not set, try to extract from URL or use default
-    if not site_name and st.secrets.get("site_name"):
-        site_name = st.secrets["site_name"]
-    
-    # If still no site name, use a default for local development
-    if not site_name:
-        site_name = "localdev"
-        st.info("Running in local development mode. Password is 'localdev'")
-    
     # Initialize session state for authentication
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -68,6 +55,61 @@ def check_password():
     # If already authenticated, return True
     if st.session_state.authenticated:
         return True
+    
+    # Try to get the site name from different sources
+    site_name = ""
+    
+    # Method 1: Check if we're on Streamlit Cloud
+    try:
+        # Get the app URL from Streamlit's internal config
+        import urllib.parse
+        from streamlit.web.server.server import Server
+        
+        server = Server.get_current()
+        if server:
+            # Try to extract from the server
+            request_headers = getattr(server, '_headers', {})
+            host = request_headers.get('Host', '')
+            
+            # Parse the host to get subdomain
+            if host and '.streamlit.app' in host:
+                # Extract subdomain from host (e.g., "chitrasangraha1" from "chitrasangraha1.streamlit.app")
+                site_name = host.split('.')[0]
+                st.info(f"Detected site: {site_name}")
+    except:
+        pass
+    
+    # Method 2: Check environment variable
+    if not site_name:
+        site_name = os.environ.get("SITE_NAME", "")
+    
+    # Method 3: Check Streamlit secrets
+    if not site_name and "site_name" in st.secrets:
+        site_name = st.secrets["site_name"]
+    
+    # Method 4: Check for custom site name file
+    if not site_name:
+        try:
+            site_file = Path("site_name.txt")
+            if site_file.exists():
+                site_name = site_file.read_text().strip()
+        except:
+            pass
+    
+    # Method 5: For local development, use the directory name
+    if not site_name:
+        try:
+            # Use the parent directory name as site name
+            current_dir = Path(__file__).parent
+            site_name = current_dir.name.lower().replace('_', '-').replace(' ', '-')
+            st.info(f"Using directory name as site name: {site_name}")
+        except:
+            site_name = "localdev"
+            st.info("Running in local development mode. Password is 'localdev'")
+    
+    # Store site name in session state for consistency
+    if "site_name" not in st.session_state:
+        st.session_state.site_name = site_name
     
     # Show password input
     st.title("🔒 Secure Photo & Video Album")
@@ -80,18 +122,35 @@ def check_password():
         
         password = st.text_input("Password", type="password", key="password_input")
         
-        if st.button("Login", use_container_width=True):
-            if password.strip() == site_name:
-                st.session_state.authenticated = True
-                st.success("Access granted!")
-                time.sleep(1)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Login", use_container_width=True):
+                if password.strip() == site_name:
+                    st.session_state.authenticated = True
+                    st.success("Access granted!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Incorrect password. Please try again.")
+        
+        with col_b:
+            if st.button("Reset", use_container_width=True):
+                st.session_state.authenticated = False
                 st.rerun()
-            else:
-                st.error("Incorrect password. Please try again.")
         
         # Optional: Show hint
-        if st.checkbox("Show hint"):
+        with st.expander("Need help?"):
             st.info(f"The password is exactly: **{site_name}**")
+            st.info("This is typically:")
+            st.info("• Your Streamlit Cloud subdomain (e.g., 'chitrasangraha1' for 'chitrasangraha1.streamlit.app')")
+            st.info("• Or your directory name if running locally")
+            st.info("• Or set via SITE_NAME environment variable")
+            
+            # For local development, provide easier access
+            if site_name == "localdev":
+                if st.button("Auto-login for development"):
+                    st.session_state.authenticated = True
+                    st.rerun()
     
     return False
 
@@ -101,7 +160,7 @@ def check_password():
 class Config:
     """Application configuration constants"""
     APP_NAME = "MemoryVault Pro+"
-    VERSION = "3.0.0"
+    VERSION = "3.1.0"
     
     # Get absolute paths
     BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -733,6 +792,19 @@ class DatabaseManager:
             st.error(f"Error retrieving people: {str(e)}")
             return []
     
+    def get_person_by_folder(self, folder_name: str) -> Optional[Dict]:
+        """Get person by folder name"""
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM people WHERE folder_name = ?', (folder_name,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except sqlite3.Error as e:
+            st.error(f"Error retrieving person by folder: {str(e)}")
+            return None
+    
     def add_album_entry(self, entry: AlbumEntry):
         """Add album entry to database"""
         if not isinstance(entry, AlbumEntry):
@@ -860,14 +932,14 @@ class DatabaseManager:
                     conditions.append("ae.person_id = ?")
                     params.append(person_id)
                 
-                if media_type:
+                if media_type and media_type != 'all':
                     conditions.append("m.media_type = ?")
                     params.append(media_type)
                 
                 conditions.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
                 params.extend([search_pattern, search_pattern, search_pattern])
                 
-                where_clause = " AND ".join(conditions)
+                where_clause = " AND ".join(conditions) if conditions else "1=1"
                 
                 cursor.execute(f'''
                 SELECT ae.*, p.display_name, m.filename, m.media_type, m.thumbnail_path, m.video_thumbnail_path
@@ -949,18 +1021,32 @@ class DatabaseManager:
             st.error(f"Database error retrieving entry details: {str(e)}")
             return None
     
-    def get_person_by_folder(self, folder_name: str) -> Optional[Dict]:
-        """Get person by folder name"""
+    def get_recent_entries(self, limit: int = 10) -> List[Dict]:
+        """Get recent album entries"""
         try:
             with self.get_connection() as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                cursor.execute('SELECT * FROM people WHERE folder_name = ?', (folder_name,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+                
+                cursor.execute('''
+                SELECT 
+                    ae.*,
+                    p.display_name,
+                    m.filename,
+                    m.media_type,
+                    m.thumbnail_path,
+                    m.video_thumbnail_path
+                FROM album_entries ae
+                JOIN people p ON ae.person_id = p.person_id
+                JOIN media m ON ae.media_id = m.media_id
+                ORDER BY ae.created_at DESC
+                LIMIT ?
+                ''', (limit,))
+                
+                return [dict(row) for row in cursor.fetchall()]
         except sqlite3.Error as e:
-            st.error(f"Error retrieving person by folder: {str(e)}")
-            return None
+            st.error(f"Error retrieving recent entries: {str(e)}")
+            return []
 
 # ============================================================================
 # MEDIA PROCESSING AND THUMBNAIL MANAGEMENT
@@ -1382,7 +1468,7 @@ class AlbumManager:
         if 'initialized' not in st.session_state:
             st.session_state.update({
                 'initialized': True,
-                'current_page': 1,
+                'current_page': 'dashboard',
                 'selected_person': None,
                 'selected_media': None,
                 'search_query': '',
@@ -1886,22 +1972,8 @@ class AlbumManager:
         
         def generate_data():
             try:
-                with sqlite3.connect(self.db.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.cursor()
-                    
-                    cursor.execute('''
-                    SELECT ae.*, p.display_name, m.filename, m.media_type, m.thumbnail_path, m.video_thumbnail_path,
-                           (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating
-                    FROM album_entries ae
-                    JOIN people p ON ae.person_id = p.person_id
-                    JOIN media m ON ae.media_id = m.media_id
-                    ORDER BY ae.created_at DESC
-                    LIMIT ?
-                    ''', (limit,))
-                    
-                    return [dict(row) for row in cursor.fetchall()]
-            except sqlite3.Error as e:
+                return self.db.get_recent_entries(limit)
+            except Exception as e:
                 st.error(f"Error getting recent entries: {str(e)}")
                 return []
         
@@ -2219,7 +2291,7 @@ class PhotoVideoAlbumApp:
                 st.metric("Videos", total_videos)
             with col_b:
                 st.metric("People", len(people))
-                if total_media > 0:
+                if total_media > 0 and len(people) > 0:
                     st.metric("Avg per Person", f"{total_media/len(people):.1f}")
         
         # Recent Activity
@@ -2232,8 +2304,16 @@ class PhotoVideoAlbumApp:
                 with st.container():
                     col_a, col_b = st.columns([1, 4])
                     with col_a:
-                        if entry.get('thumbnail_data_url'):
-                            st.image(entry['thumbnail_data_url'], width=80)
+                        if entry.get('thumbnail_path'):
+                            thumbnail_path = Path(entry['thumbnail_path'])
+                            if thumbnail_path.exists():
+                                data_url = self.manager.media_processor.get_media_data_url(thumbnail_path)
+                                st.image(data_url, width=80)
+                            else:
+                                if entry.get('media_type') == MediaType.VIDEO.value:
+                                    st.markdown("🎬")
+                                else:
+                                    st.markdown("📸")
                         else:
                             if entry.get('media_type') == MediaType.VIDEO.value:
                                 st.markdown("🎬")
@@ -2400,13 +2480,34 @@ class PhotoVideoAlbumApp:
             with col1:
                 search_query = st.text_input("Search media...", key="gallery_search")
             with col2:
-                media_filter = st.selectbox(
+                # FIXED: Use a safe default value for media_filter
+                media_filter_options = ["All", "Image", "Video"]
+                current_filter = st.session_state.get('media_filter', 'all')
+                
+                # Convert to display format
+                if current_filter == 'all':
+                    default_index = 0
+                elif current_filter == 'image':
+                    default_index = 1
+                elif current_filter == 'video':
+                    default_index = 2
+                else:
+                    default_index = 0
+                
+                media_filter_display = st.selectbox(
                     "Media Type",
-                    ["All", "Image", "Video"],
-                    key="media_filter",
-                    index=["All", "Image", "Video"].index(st.session_state.get('media_filter', 'All'))
+                    media_filter_options,
+                    key="media_filter_display",
+                    index=default_index
                 )
-                st.session_state['media_filter'] = media_filter.lower()
+                
+                # Convert back to internal format
+                if media_filter_display == "All":
+                    st.session_state['media_filter'] = 'all'
+                elif media_filter_display == "Image":
+                    st.session_state['media_filter'] = 'image'
+                elif media_filter_display == "Video":
+                    st.session_state['media_filter'] = 'video'
             with col3:
                 view_mode = st.selectbox("View", ["Grid", "List"], key="view_mode")
             with col4:
@@ -2437,9 +2538,10 @@ class PhotoVideoAlbumApp:
                     conditions.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
                     params.extend([search_pattern, search_pattern, search_pattern])
                 
-                if st.session_state['media_filter'] != 'all':
+                media_filter = st.session_state['media_filter']
+                if media_filter != 'all':
                     conditions.append("m.media_type = ?")
-                    params.append(st.session_state['media_filter'])
+                    params.append(media_filter)
                 
                 where_clause = " AND ".join(conditions) if conditions else "1=1"
                 params.extend([items_per_page, offset])
@@ -2463,14 +2565,14 @@ class PhotoVideoAlbumApp:
                     search_pattern = f'%{search_query}%'
                     count_conditions = ["(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)"]
                     count_params.extend([search_pattern, search_pattern, search_pattern])
-                    if st.session_state['media_filter'] != 'all':
+                    if media_filter != 'all':
                         count_conditions.append("m.media_type = ?")
-                        count_params.append(st.session_state['media_filter'])
+                        count_params.append(media_filter)
                     count_where = " AND ".join(count_conditions)
                 else:
-                    if st.session_state['media_filter'] != 'all':
+                    if media_filter != 'all':
                         count_where = "m.media_type = ?"
-                        count_params.append(st.session_state['media_filter'])
+                        count_params.append(media_filter)
                     else:
                         count_where = "1=1"
                 
@@ -2541,27 +2643,48 @@ class PhotoVideoAlbumApp:
             # Media type indicator
             st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')), unsafe_allow_html=True)
             
-            # Thumbnail with play icon for videos
-            if entry.get('thumbnail_data_url'):
-                col1, col2, col3 = st.columns([1, 8, 1])
-                with col2:
-                    # Create container for thumbnail
-                    st.markdown(
-                        f'<div style="position: relative; width: 100%;">'
-                        f'<img src="{entry["thumbnail_data_url"]}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px;">',
-                        unsafe_allow_html=True
-                    )
+            # Thumbnail
+            thumbnail_data_url = None
+            
+            # Try to get thumbnail from different sources
+            if entry.get('thumbnail_path'):
+                thumbnail_path = Path(entry['thumbnail_path'])
+                if thumbnail_path.exists():
+                    thumbnail_data_url = self.manager.media_processor.get_media_data_url(thumbnail_path)
+            elif entry.get('video_thumbnail_path'):
+                video_thumbnail_path = Path(entry['video_thumbnail_path'])
+                if video_thumbnail_path.exists():
+                    thumbnail_data_url = self.manager.media_processor.get_media_data_url(video_thumbnail_path)
+            
+            if thumbnail_data_url:
+                # Create container for thumbnail with play icon for videos
+                html_content = f'''
+                <div style="position: relative; width: 100%;">
+                    <img src="{thumbnail_data_url}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px;">
+                '''
+                
+                if entry.get('media_type') == MediaType.VIDEO.value:
+                    html_content += '''
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                                font-size: 48px; color: white; opacity: 0.8; text-shadow: 2px 2px 4px rgba(0,0,0,0.5);">
+                        ▶
+                    </div>
+                    '''
                     
-                    # Add play icon overlay for videos
-                    if entry.get('media_type') == MediaType.VIDEO.value:
-                        st.markdown(
-                            f'<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 48px; color: white; opacity: 0.8;">▶</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Add duration badge
-                        if entry.get('duration'):
-                            st.markdown(UIComponents.video_duration_badge(entry['duration']), unsafe_allow_html=True)
+                    # Add duration badge
+                    if entry.get('duration'):
+                        minutes = int(entry['duration'] // 60)
+                        seconds = int(entry['duration'] % 60)
+                        html_content += f'''
+                        <div style="position: absolute; bottom: 8px; right: 8px; 
+                                    background: rgba(0, 0, 0, 0.7); color: white; 
+                                    padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">
+                            {minutes:02d}:{seconds:02d}
+                        </div>
+                        '''
+                
+                html_content += '</div>'
+                st.markdown(html_content, unsafe_allow_html=True)
             else:
                 if entry.get('media_type') == MediaType.VIDEO.value:
                     st.markdown("🎬 No thumbnail")
@@ -2602,18 +2725,30 @@ class PhotoVideoAlbumApp:
             
             with col1:
                 # Thumbnail
-                if entry.get('thumbnail_data_url'):
-                    # Container for thumbnail with play icon for videos
+                thumbnail_data_url = None
+                
+                # Try to get thumbnail from different sources
+                if entry.get('thumbnail_path'):
+                    thumbnail_path = Path(entry['thumbnail_path'])
+                    if thumbnail_path.exists():
+                        thumbnail_data_url = self.manager.media_processor.get_media_data_url(thumbnail_path)
+                elif entry.get('video_thumbnail_path'):
+                    video_thumbnail_path = Path(entry['video_thumbnail_path'])
+                    if video_thumbnail_path.exists():
+                        thumbnail_data_url = self.manager.media_processor.get_media_data_url(video_thumbnail_path)
+                
+                if thumbnail_data_url:
                     if entry.get('media_type') == MediaType.VIDEO.value:
+                        # Container for video thumbnail with play icon
                         st.markdown(
                             f'<div style="position: relative; width: 100px; height: 100px;">'
-                            f'<img src="{entry["thumbnail_data_url"]}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">'
+                            f'<img src="{thumbnail_data_url}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">'
                             f'<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; color: white; opacity: 0.8;">▶</div>'
                             f'</div>',
                             unsafe_allow_html=True
                         )
                     else:
-                        st.image(entry['thumbnail_data_url'], width=100)
+                        st.image(thumbnail_data_url, width=100)
                 else:
                     if entry.get('media_type') == MediaType.VIDEO.value:
                         st.markdown("🎬")
@@ -2629,10 +2764,8 @@ class PhotoVideoAlbumApp:
                     st.markdown(f"*{entry.get('description', '')[:100]}...*")
                 
                 if entry.get('tags'):
-                    st.markdown(UIComponents.tag_badges(
-                        entry['tags'].split(',') if isinstance(entry['tags'], str) else entry['tags'], 
-                        max_display=3
-                    ), unsafe_allow_html=True)
+                    tags_list = entry['tags'].split(',') if isinstance(entry['tags'], str) else entry['tags']
+                    st.markdown(UIComponents.tag_badges(tags_list, max_display=3), unsafe_allow_html=True)
             
             with col3:
                 # Rating
@@ -2776,11 +2909,9 @@ class PhotoVideoAlbumApp:
                     st.markdown(f"**Date Taken:** {entry['date_taken']}")
                 
                 if entry.get('tags'):
+                    tags_list = entry['tags'] if isinstance(entry['tags'], list) else entry['tags'].split(',')
                     st.markdown("**Tags:**")
-                    st.markdown(UIComponents.tag_badges(
-                        entry['tags'] if isinstance(entry['tags'], list) else entry['tags'].split(','),
-                        max_display=10
-                    ), unsafe_allow_html=True)
+                    st.markdown(UIComponents.tag_badges(tags_list, max_display=10), unsafe_allow_html=True)
                 
                 if entry.get('file_size'):
                     file_size_mb = entry['file_size'] / (1024 * 1024)
@@ -2854,8 +2985,8 @@ class PhotoVideoAlbumApp:
             seconds = int(avg_duration % 60)
             st.metric("Avg Duration", f"{minutes}:{seconds:02d}")
         with col4:
-            total_size = sum(v.get('file_size', 0) for v in videos) / (1024*1024*1024)
-            st.metric("Total Size", f"{total_size:.2f} GB")
+            total_size = sum(v.get('file_size', 0) for v in videos) / (1024*1024)
+            st.metric("Total Size", f"{total_size:.2f} MB")
         
         st.divider()
         
@@ -3011,6 +3142,8 @@ class PhotoVideoAlbumApp:
                     if search_in == "Media Type":
                         if search_query.lower() in ['image', 'video']:
                             media_type_filter = search_query.lower()
+                        else:
+                            st.warning("Media type must be 'image' or 'video'")
                     
                     db_results = self.manager.db.search_entries(
                         search_query if search_in != "Media Type" else "",
