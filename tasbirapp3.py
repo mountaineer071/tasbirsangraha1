@@ -355,7 +355,6 @@ class MediaMetadata:
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
-# Keep existing dataclasses but update AlbumEntry to use media_id instead of image_id
 @dataclass
 class AlbumEntry:
     """Album entry with user content"""
@@ -380,7 +379,61 @@ class AlbumEntry:
         data['updated_at'] = self.updated_at.isoformat()
         return data
 
-# Keep Comment, Rating, PersonProfile dataclasses unchanged
+@dataclass
+class Comment:
+    """Comment on an album entry"""
+    comment_id: str
+    entry_id: str
+    user_id: str
+    username: str
+    content: str
+    created_at: datetime.datetime
+    is_edited: bool
+    parent_comment_id: Optional[str]
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        data = asdict(self)
+        data['created_at'] = self.created_at.isoformat()
+        return data
+
+@dataclass
+class Rating:
+    """Rating for an album entry"""
+    rating_id: str
+    entry_id: str
+    user_id: str
+    rating_value: int
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        data = asdict(self)
+        data['created_at'] = self.created_at.isoformat()
+        data['updated_at'] = self.updated_at.isoformat()
+        return data
+
+@dataclass
+class PersonProfile:
+    """Person profile information"""
+    person_id: str
+    folder_name: str
+    display_name: str
+    bio: str
+    birth_date: Optional[datetime.date]
+    relationship: str
+    contact_info: str
+    social_links: Dict[str, str]
+    profile_image: Optional[str]
+    created_at: datetime.datetime
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        data = asdict(self)
+        data['birth_date'] = self.birth_date.isoformat() if self.birth_date else None
+        data['created_at'] = self.created_at.isoformat()
+        return data
 
 # ============================================================================
 # DATABASE MANAGEMENT - ENHANCED FOR VIDEO
@@ -639,8 +692,6 @@ class DatabaseManager:
             st.error(f"Error retrieving {media_type}s: {str(e)}")
             return []
     
-    # Keep other methods but update references from images to media
-    
     def add_person(self, person: PersonProfile):
         """Add person to database"""
         if not isinstance(person, PersonProfile):
@@ -896,6 +947,19 @@ class DatabaseManager:
                 return None
         except sqlite3.Error as e:
             st.error(f"Database error retrieving entry details: {str(e)}")
+            return None
+    
+    def get_person_by_folder(self, folder_name: str) -> Optional[Dict]:
+        """Get person by folder name"""
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM people WHERE folder_name = ?', (folder_name,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except sqlite3.Error as e:
+            st.error(f"Error retrieving person by folder: {str(e)}")
             return None
 
 # ============================================================================
@@ -1398,11 +1462,7 @@ class AlbumManager:
                     display_name = ' '.join(word.capitalize() for word in person_dir.name.split())
                 
                 # Create or update person profile
-                existing_person = None
-                for p in self.db.get_all_people():
-                    if p['folder_name'] == person_dir.name:
-                        existing_person = p
-                        break
+                existing_person = self.db.get_person_by_folder(person_dir.name)
                 
                 if not existing_person:
                     person_profile = PersonProfile(
@@ -1511,6 +1571,225 @@ class AlbumManager:
             results['errors'].append(f"Critical error: {str(e)}")
             return results
     
+    def get_person_stats(self, person_id: str) -> Dict:
+        """Get statistics for a person with error handling"""
+        cache_key = f"person_stats_{person_id}"
+        
+        def generate_stats():
+            try:
+                with sqlite3.connect(self.db.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('SELECT COUNT(*) FROM album_entries WHERE person_id = ?', (person_id,))
+                    media_count = cursor.fetchone()[0]
+                    
+                    # Count images and videos separately
+                    cursor.execute('''
+                    SELECT m.media_type, COUNT(*) as count
+                    FROM album_entries ae
+                    JOIN media m ON ae.media_id = m.media_id
+                    WHERE ae.person_id = ?
+                    GROUP BY m.media_type
+                    ''', (person_id,))
+                    
+                    image_count = 0
+                    video_count = 0
+                    for row in cursor.fetchall():
+                        if row[0] == 'image':
+                            image_count = row[1]
+                        elif row[0] == 'video':
+                            video_count = row[1]
+                    
+                    cursor.execute('''
+                    SELECT COUNT(DISTINCT c.comment_id)
+                    FROM comments c
+                    JOIN album_entries ae ON c.entry_id = ae.entry_id
+                    WHERE ae.person_id = ?
+                    ''', (person_id,))
+                    comment_count = cursor.fetchone()[0]
+                    
+                    cursor.execute('''
+                    SELECT AVG(r.rating_value)
+                    FROM ratings r
+                    JOIN album_entries ae ON r.entry_id = ae.entry_id
+                    WHERE ae.person_id = ?
+                    ''', (person_id,))
+                    avg_rating = cursor.fetchone()[0] or 0.0
+                    
+                    cursor.execute('SELECT MAX(ae.created_at) FROM album_entries ae WHERE ae.person_id = ?', (person_id,))
+                    last_activity = cursor.fetchone()[0]
+                    
+                    return {
+                        'media_count': media_count,
+                        'image_count': image_count,
+                        'video_count': video_count,
+                        'comment_count': comment_count,
+                        'avg_rating': float(avg_rating),
+                        'last_activity': last_activity
+                    }
+            except sqlite3.Error as e:
+                st.error(f"Error getting person stats: {str(e)}")
+                return {
+                    'media_count': 0,
+                    'image_count': 0,
+                    'video_count': 0,
+                    'comment_count': 0,
+                    'avg_rating': 0.0,
+                    'last_activity': None
+                }
+        
+        return self.cache.get_or_set(cache_key, generate_stats)
+    
+    def add_to_favorites(self, entry_id: str):
+        """Add entry to user favorites"""
+        user_id = st.session_state['user_id']
+        
+        try:
+            with sqlite3.connect(self.db.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                INSERT OR IGNORE INTO user_favorites (user_id, entry_id)
+                VALUES (?, ?)
+                ''', (user_id, entry_id))
+                conn.commit()
+            
+            if 'favorites' not in st.session_state:
+                st.session_state.favorites = set()
+            st.session_state.favorites.add(entry_id)
+        except sqlite3.Error as e:
+            st.error(f"Error adding to favorites: {str(e)}")
+    
+    def remove_from_favorites(self, entry_id: str):
+        """Remove entry from user favorites"""
+        user_id = st.session_state['user_id']
+        
+        try:
+            with sqlite3.connect(self.db.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                DELETE FROM user_favorites WHERE user_id = ? AND entry_id = ?
+                ''', (user_id, entry_id))
+                conn.commit()
+            
+            if 'favorites' in st.session_state and entry_id in st.session_state.favorites:
+                st.session_state.favorites.remove(entry_id)
+        except sqlite3.Error as e:
+            st.error(f"Error removing from favorites: {str(e)}")
+    
+    def get_user_favorites(self) -> List[Dict]:
+        """Get user's favorite entries"""
+        user_id = st.session_state['user_id']
+        
+        try:
+            with sqlite3.connect(self.db.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute('''
+                SELECT ae.*, p.display_name, m.filename, m.media_type, m.thumbnail_path, m.video_thumbnail_path
+                FROM user_favorites uf
+                JOIN album_entries ae ON uf.entry_id = ae.entry_id
+                JOIN people p ON ae.person_id = p.person_id
+                JOIN media m ON ae.media_id = m.media_id
+                WHERE uf.user_id = ?
+                ORDER BY uf.created_at DESC
+                ''', (user_id,))
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            st.error(f"Error retrieving favorites: {str(e)}")
+            return []
+    
+    def add_comment_to_entry(self, entry_id: str, content: str, parent_comment_id: str = None):
+        """Add comment to an entry"""
+        if not content or len(content.strip()) == 0:
+            st.warning("Comment cannot be empty")
+            return False
+        
+        if len(content) > Config.MAX_COMMENT_LENGTH:
+            st.warning(f"Comment is too long. Maximum length is {Config.MAX_COMMENT_LENGTH} characters.")
+            return False
+        
+        try:
+            comment = Comment(
+                comment_id=str(uuid.uuid4()),
+                entry_id=entry_id,
+                user_id=st.session_state['user_id'],
+                username=st.session_state['username'],
+                content=content.strip(),
+                created_at=datetime.datetime.now(),
+                is_edited=False,
+                parent_comment_id=parent_comment_id
+            )
+            
+            self.db.add_comment(comment)
+            
+            # Clear cache for this entry's comments
+            cache_key = f"comments_{entry_id}"
+            self.cache.clear(cache_key)
+            
+            st.success("Comment added successfully!")
+            return True
+            
+        except Exception as e:
+            st.error(f"Error adding comment: {str(e)}")
+            return False
+    
+    def add_rating_to_entry(self, entry_id: str, rating_value: int):
+        """Add or update rating for an entry"""
+        if rating_value < 1 or rating_value > 5:
+            st.warning("Rating must be between 1 and 5")
+            return False
+        
+        try:
+            rating = Rating(
+                rating_id=str(uuid.uuid4()),
+                entry_id=entry_id,
+                user_id=st.session_state['user_id'],
+                rating_value=rating_value,
+                created_at=datetime.datetime.now(),
+                updated_at=datetime.datetime.now()
+            )
+            
+            self.db.add_rating(rating)
+            
+            # Clear cache for this entry's ratings
+            cache_key = f"ratings_{entry_id}"
+            self.cache.clear(cache_key)
+            
+            st.success(f"Rating of {rating_value} stars added!")
+            return True
+            
+        except Exception as e:
+            st.error(f"Error adding rating: {str(e)}")
+            return False
+    
+    def get_all_people_with_stats(self) -> List[Dict]:
+        """Get all people with their statistics"""
+        cache_key = "all_people_with_stats"
+        
+        def generate_data():
+            try:
+                people = self.db.get_all_people()
+                result = []
+                
+                for person in people:
+                    stats = self.get_person_stats(person['person_id'])
+                    person_with_stats = {**person, **stats}
+                    
+                    # Get profile image if exists
+                    if person.get('profile_image'):
+                        profile_image_path = Config.DATA_DIR / person['folder_name'] / person['profile_image']
+                        if profile_image_path.exists():
+                            person_with_stats['profile_image_data'] = self.media_processor.get_media_data_url(profile_image_path)
+                    
+                    result.append(person_with_stats)
+                
+                return result
+            except Exception as e:
+                st.error(f"Error getting people with stats: {str(e)}")
+                return []
+        
+        return self.cache.get_or_set(cache_key, generate_data)
+    
     def get_entries_by_person(self, person_id: str, page: int = 1, search_query: str = None, media_filter: str = 'all') -> Dict:
         """Get entries for a specific person with pagination"""
         cache_key = f"entries_person_{person_id}_page_{page}_query_{search_query}_filter_{media_filter}"
@@ -1598,6 +1877,68 @@ class AlbumManager:
                     'total_pages': 1,
                     'current_page': page
                 }
+        
+        return self.cache.get_or_set(cache_key, generate_data)
+    
+    def get_recent_entries(self, limit: int = 10) -> List[Dict]:
+        """Get most recent entries"""
+        cache_key = f"recent_entries_{limit}"
+        
+        def generate_data():
+            try:
+                with sqlite3.connect(self.db.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                    SELECT ae.*, p.display_name, m.filename, m.media_type, m.thumbnail_path, m.video_thumbnail_path,
+                           (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating
+                    FROM album_entries ae
+                    JOIN people p ON ae.person_id = p.person_id
+                    JOIN media m ON ae.media_id = m.media_id
+                    ORDER BY ae.created_at DESC
+                    LIMIT ?
+                    ''', (limit,))
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+            except sqlite3.Error as e:
+                st.error(f"Error getting recent entries: {str(e)}")
+                return []
+        
+        return self.cache.get_or_set(cache_key, generate_data)
+    
+    def get_top_rated_entries(self, limit: int = 10) -> List[Dict]:
+        """Get top rated entries"""
+        cache_key = f"top_rated_entries_{limit}"
+        
+        def generate_data():
+            try:
+                with sqlite3.connect(self.db.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                    SELECT ae.*, p.display_name, m.filename, m.media_type, m.thumbnail_path, m.video_thumbnail_path,
+                           (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating,
+                           (SELECT COUNT(*) FROM ratings r WHERE r.entry_id = ae.entry_id) as rating_count
+                    FROM album_entries ae
+                    JOIN people p ON ae.person_id = p.person_id
+                    JOIN media m ON ae.media_id = m.media_id
+                    WHERE ae.entry_id IN (
+                        SELECT r.entry_id
+                        FROM ratings r
+                        GROUP BY r.entry_id
+                        HAVING AVG(r.rating_value) >= 4.0
+                        ORDER BY AVG(r.rating_value) DESC
+                    )
+                    ORDER BY avg_rating DESC
+                    LIMIT ?
+                    ''', (limit,))
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+            except sqlite3.Error as e:
+                st.error(f"Error getting top rated entries: {str(e)}")
+                return []
         
         return self.cache.get_or_set(cache_key, generate_data)
     
@@ -1696,10 +2037,6 @@ class AlbumManager:
                 
         except Exception as e:
             st.error(f"Error streaming video: {str(e)}")
-    
-    # Keep other methods (add_to_favorites, remove_from_favorites, get_user_favorites, 
-    # add_comment_to_entry, add_rating_to_entry, get_person_stats, etc.) 
-    # but update them to work with media_id instead of image_id
 
 # ============================================================================
 # UI APPLICATION CLASS - ENHANCED FOR VIDEO
@@ -1814,6 +2151,233 @@ class PhotoVideoAlbumApp:
             if autoplay != st.session_state.get('video_autoplay', False):
                 st.session_state['video_autoplay'] = autoplay
                 st.rerun()
+    
+    def render_dashboard(self):
+        """Render dashboard page"""
+        st.title("📊 Dashboard")
+        st.markdown("Welcome to your photo & video album management system!")
+        
+        # Stats cards
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            people = self.manager.db.get_all_people()
+            st.metric("👥 People", len(people))
+        
+        with col2:
+            total_media = 0
+            total_images = 0
+            total_videos = 0
+            for person in people:
+                stats = self.manager.get_person_stats(person['person_id'])
+                total_media += stats.get('media_count', 0)
+                total_images += stats.get('image_count', 0)
+                total_videos += stats.get('video_count', 0)
+            st.metric("📸🎬 Total Media", total_media)
+        
+        with col3:
+            recent = self.manager.get_recent_entries(limit=1)
+            if recent:
+                st.metric("🕐 Last Added", recent[0].get('caption', 'N/A'))
+            else:
+                st.metric("🕐 Last Added", "None")
+        
+        with col4:
+            top_rated = self.manager.get_top_rated_entries(limit=1)
+            if top_rated:
+                avg_rating = top_rated[0].get('avg_rating', 0)
+                st.metric("⭐ Top Rated", f"{avg_rating:.1f}/5")
+            else:
+                st.metric("⭐ Top Rated", "N/A")
+        
+        st.divider()
+        
+        # Media type breakdown
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📊 Media Distribution")
+            if total_media > 0:
+                labels = ['Images', 'Videos']
+                sizes = [total_images, total_videos]
+                colors = ['#667eea', '#FF416C']
+                
+                fig_data = pd.DataFrame({
+                    'Type': labels,
+                    'Count': sizes
+                })
+                
+                st.bar_chart(fig_data.set_index('Type'))
+            else:
+                st.info("No media files found")
+        
+        with col2:
+            st.subheader("⚡ Quick Stats")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.metric("Images", total_images)
+                st.metric("Videos", total_videos)
+            with col_b:
+                st.metric("People", len(people))
+                if total_media > 0:
+                    st.metric("Avg per Person", f"{total_media/len(people):.1f}")
+        
+        # Recent Activity
+        st.divider()
+        st.subheader("📅 Recent Activity")
+        recent_entries = self.manager.get_recent_entries(limit=5)
+        
+        if recent_entries:
+            for entry in recent_entries:
+                with st.container():
+                    col_a, col_b = st.columns([1, 4])
+                    with col_a:
+                        if entry.get('thumbnail_data_url'):
+                            st.image(entry['thumbnail_data_url'], width=80)
+                        else:
+                            if entry.get('media_type') == MediaType.VIDEO.value:
+                                st.markdown("🎬")
+                            else:
+                                st.markdown("📸")
+                    with col_b:
+                        st.markdown(f"**{entry.get('caption', 'Untitled')}**")
+                        st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')), unsafe_allow_html=True)
+                        st.caption(f"👤 {entry.get('display_name', 'Unknown')}")
+                        st.caption(f"📅 {entry.get('created_at', '')}")
+                    st.divider()
+        else:
+            st.info("No recent activity")
+        
+        # Quick Actions
+        st.divider()
+        st.subheader("⚡ Quick Actions")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📁 Scan for New Media", use_container_width=True):
+                with st.spinner("Scanning..."):
+                    results = self.manager.scan_directory()
+                    st.success(f"Found {results['new_media']} new media files!")
+                    st.rerun()
+        
+        with col2:
+            if st.button("👥 Manage People", use_container_width=True):
+                st.session_state['current_page'] = 'people'
+                st.rerun()
+        
+        with col3:
+            if st.button("🎬 View Videos", use_container_width=True):
+                st.session_state['current_page'] = 'videos'
+                st.rerun()
+    
+    def render_people_page(self):
+        """Render people management page"""
+        st.title("👥 People")
+        
+        # Search and filter
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            search_query = st.text_input("Search people...", key="people_search")
+        with col2:
+            sort_by = st.selectbox("Sort by", ["Name", "Recently Added", "Media Count"], key="people_sort")
+        
+        # Get all people
+        all_people = self.manager.get_all_people_with_stats()
+        
+        # Filter and sort
+        if search_query:
+            all_people = [p for p in all_people if search_query.lower() in p['display_name'].lower()]
+        
+        if sort_by == "Name":
+            all_people.sort(key=lambda x: x['display_name'])
+        elif sort_by == "Media Count":
+            all_people.sort(key=lambda x: x['media_count'], reverse=True)
+        elif sort_by == "Recently Added":
+            all_people.sort(key=lambda x: x.get('last_activity', ''), reverse=True)
+        
+        # Display people
+        cols = st.columns(3)
+        for idx, person in enumerate(all_people):
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    # Profile image or placeholder
+                    if person.get('profile_image_data'):
+                        st.image(person['profile_image_data'], use_column_width=True)
+                    else:
+                        # Create colored placeholder
+                        colors = ['#667eea', '#764ba2', '#f56565', '#48bb78', '#ed8936']
+                        color = colors[hash(person['person_id']) % len(colors)]
+                        st.markdown(
+                            f'<div style="background: {color}; height: 150px; border-radius: 10px; display: flex; align-items: center; justify-content: center;">'
+                            f'<span style="color: white; font-size: 48px;">{person["display_name"][0].upper()}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                    
+                    st.subheader(person['display_name'])
+                    st.caption(f"📁 {person['folder_name']}")
+                    
+                    # Stats
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("Media", person.get('media_count', 0))
+                    with col_b:
+                        st.metric("Images", person.get('image_count', 0))
+                    with col_c:
+                        st.metric("Videos", person.get('video_count', 0))
+                    
+                    # Actions
+                    if st.button("View Gallery", key=f"view_{person['person_id']}", use_container_width=True):
+                        st.session_state['selected_person'] = person['person_id']
+                        st.session_state['current_page'] = 'gallery'
+                        st.rerun()
+        
+        # Add new person
+        st.divider()
+        with st.expander("➕ Add New Person"):
+            with st.form("add_person_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    folder_name = st.text_input("Folder Name*")
+                    display_name = st.text_input("Display Name*")
+                    relationship = st.selectbox(
+                        "Relationship",
+                        ["Family", "Friend", "Colleague", "Relative", "Other"]
+                    )
+                with col2:
+                    birth_date = st.date_input("Birth Date", value=None)
+                    contact_info = st.text_input("Contact Info")
+                    bio = st.text_area("Bio", height=100)
+                
+                if st.form_submit_button("Add Person"):
+                    if folder_name and display_name:
+                        # Create folder
+                        person_dir = Config.DATA_DIR / folder_name
+                        person_dir.mkdir(exist_ok=True)
+                        
+                        # Add to database
+                        person_profile = PersonProfile(
+                            person_id=str(uuid.uuid4()),
+                            folder_name=folder_name,
+                            display_name=display_name,
+                            bio=bio,
+                            birth_date=birth_date,
+                            relationship=relationship,
+                            contact_info=contact_info,
+                            social_links={},
+                            profile_image=None,
+                            created_at=datetime.datetime.now()
+                        )
+                        
+                        try:
+                            self.manager.db.add_person(person_profile)
+                            st.success(f"Person '{display_name}' added successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding person: {str(e)}")
+                    else:
+                        st.warning("Please fill in all required fields (*)")
     
     def render_gallery_page(self):
         """Render gallery page for all media"""
@@ -1981,14 +2545,17 @@ class PhotoVideoAlbumApp:
             if entry.get('thumbnail_data_url'):
                 col1, col2, col3 = st.columns([1, 8, 1])
                 with col2:
-                    st.image(entry['thumbnail_data_url'], use_column_width=True)
+                    # Create container for thumbnail
+                    st.markdown(
+                        f'<div style="position: relative; width: 100%;">'
+                        f'<img src="{entry["thumbnail_data_url"]}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px;">',
+                        unsafe_allow_html=True
+                    )
                     
                     # Add play icon overlay for videos
                     if entry.get('media_type') == MediaType.VIDEO.value:
                         st.markdown(
-                            f'<div style="position: relative; text-align: center; color: white;">'
-                            f'<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 48px; opacity: 0.8;">▶</div>'
-                            f'</div>',
+                            f'<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 48px; color: white; opacity: 0.8;">▶</div>',
                             unsafe_allow_html=True
                         )
                         
@@ -1996,7 +2563,10 @@ class PhotoVideoAlbumApp:
                         if entry.get('duration'):
                             st.markdown(UIComponents.video_duration_badge(entry['duration']), unsafe_allow_html=True)
             else:
-                st.markdown("🖼️")
+                if entry.get('media_type') == MediaType.VIDEO.value:
+                    st.markdown("🎬 No thumbnail")
+                else:
+                    st.markdown("📸 No thumbnail")
             
             # Caption
             st.markdown(f"**{entry.get('caption', 'Untitled')}**")
@@ -2045,7 +2615,10 @@ class PhotoVideoAlbumApp:
                     else:
                         st.image(entry['thumbnail_data_url'], width=100)
                 else:
-                    st.markdown("🖼️")
+                    if entry.get('media_type') == MediaType.VIDEO.value:
+                        st.markdown("🎬")
+                    else:
+                        st.markdown("📸")
             
             with col2:
                 st.markdown(f"### {entry.get('caption', 'Untitled')}")
@@ -2145,7 +2718,9 @@ class PhotoVideoAlbumApp:
                     
                     col_info1, col_info2, col_info3 = st.columns(3)
                     with col_info1:
-                        st.metric("Duration", f"{int(video_info['duration'] // 60)}:{int(video_info['duration'] % 60):02d}")
+                        minutes = int(video_info['duration'] // 60)
+                        seconds = int(video_info['duration'] % 60)
+                        st.metric("Duration", f"{minutes}:{seconds:02d}")
                     with col_info2:
                         st.metric("Resolution", f"{video_info['dimensions'][0]}x{video_info['dimensions'][1]}")
                     with col_info3:
@@ -2214,8 +2789,8 @@ class PhotoVideoAlbumApp:
                 if entry.get('format'):
                     st.markdown(f"**Format:** {entry['format']}")
                 
-                if entry.get('dimensions'):
-                    st.markdown(f"**Dimensions:** {entry['dimensions'][0]}x{entry['dimensions'][1]}")
+                if entry.get('width') and entry.get('height'):
+                    st.markdown(f"**Dimensions:** {entry['width']}x{entry['height']}")
                 
                 # Video-specific metadata
                 if entry.get('media_type') == MediaType.VIDEO.value:
@@ -2275,7 +2850,9 @@ class PhotoVideoAlbumApp:
             st.metric("Total Duration", f"{hours}h {minutes}m")
         with col3:
             avg_duration = total_duration / len(videos) if videos else 0
-            st.metric("Avg Duration", f"{int(avg_duration // 60)}:{int(avg_duration % 60):02d}")
+            minutes = int(avg_duration // 60)
+            seconds = int(avg_duration % 60)
+            st.metric("Avg Duration", f"{minutes}:{seconds:02d}")
         with col4:
             total_size = sum(v.get('file_size', 0) for v in videos) / (1024*1024*1024)
             st.metric("Total Size", f"{total_size:.2f} GB")
@@ -2294,7 +2871,12 @@ class PhotoVideoAlbumApp:
                         thumbnail_path = Path(video['video_thumbnail_path'])
                         if thumbnail_path.exists():
                             data_url = self.manager.media_processor.get_media_data_url(thumbnail_path)
-                            st.image(data_url, use_column_width=True)
+                            st.markdown(
+                                f'<div style="position: relative; width: 100%;">'
+                                f'<img src="{data_url}" style="width: 100%; height: 150px; object-fit: cover; border-radius: 8px;">'
+                                f'<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 32px; color: white; opacity: 0.8;">▶</div>',
+                                unsafe_allow_html=True
+                            )
                     
                     # Title
                     st.markdown(f"**{video.get('filename', 'Untitled')}**")
@@ -2388,9 +2970,663 @@ class PhotoVideoAlbumApp:
                         st.session_state['current_page'] = 'media_detail'
                         st.rerun()
     
-    # Keep other render methods (render_dashboard, render_people_page, render_favorites_page,
-    # render_search_page, render_statistics_page, render_settings_page, render_import_export_page)
-    # with minor updates to handle both media types
+    def render_favorites_page(self):
+        """Render favorites page"""
+        st.title("⭐ Favorites")
+        
+        favorites = self.manager.get_user_favorites()
+        
+        if not favorites:
+            st.info("You haven't added any favorites yet.")
+            st.markdown("Browse the gallery and click the ☆ button to add favorites!")
+            return
+        
+        # Display favorites
+        cols = st.columns(4)
+        for idx, entry in enumerate(favorites):
+            with cols[idx % 4]:
+                self._render_gallery_item(entry)
+    
+    def render_search_page(self):
+        """Render search page"""
+        st.title("🔍 Search")
+        
+        # Search options
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            search_query = st.text_input("Search term", key="global_search")
+        with col2:
+            search_in = st.selectbox(
+                "Search in",
+                ["All Fields", "Captions", "Descriptions", "Tags", "People", "Media Type"]
+            )
+        
+        if search_query:
+            with st.spinner("Searching..."):
+                # Perform search
+                results = []
+                
+                if search_in in ["All Fields", "Captions", "Descriptions", "Tags", "Media Type"]:
+                    media_type_filter = None
+                    if search_in == "Media Type":
+                        if search_query.lower() in ['image', 'video']:
+                            media_type_filter = search_query.lower()
+                    
+                    db_results = self.manager.db.search_entries(
+                        search_query if search_in != "Media Type" else "",
+                        media_type=media_type_filter
+                    )
+                    results.extend(db_results)
+                
+                if search_in in ["All Fields", "People"]:
+                    people = self.manager.db.get_all_people()
+                    for person in people:
+                        if search_query.lower() in person['display_name'].lower():
+                            # Get person's entries
+                            with sqlite3.connect(self.manager.db.db_path) as conn:
+                                conn.row_factory = sqlite3.Row
+                                cursor = conn.cursor()
+                                cursor.execute('''
+                                SELECT ae.*, p.display_name, m.filename, m.media_type, m.thumbnail_path, m.video_thumbnail_path
+                                FROM album_entries ae
+                                JOIN people p ON ae.person_id = p.person_id
+                                JOIN media m ON ae.media_id = m.media_id
+                                WHERE ae.person_id = ?
+                                LIMIT 5
+                                ''', (person['person_id'],))
+                                person_entries = [dict(row) for row in cursor.fetchall()]
+                                results.extend(person_entries)
+                
+                # Remove duplicates
+                seen_ids = set()
+                unique_results = []
+                for result in results:
+                    if result['entry_id'] not in seen_ids:
+                        seen_ids.add(result['entry_id'])
+                        unique_results.append(result)
+                
+                # Display results
+                st.subheader(f"Found {len(unique_results)} results")
+                
+                if unique_results:
+                    for entry in unique_results:
+                        self._render_gallery_item_list(entry)
+                else:
+                    st.info("No results found")
+        else:
+            st.info("Enter a search term to find photos")
+    
+    def render_statistics_page(self):
+        """Render statistics page"""
+        st.title("📊 Statistics")
+        
+        # Get all data
+        all_people = self.manager.get_all_people_with_stats()
+        
+        if not all_people:
+            st.info("No data available. Scan your directory first.")
+            return
+        
+        # Overall stats
+        col1, col2, col3, col4 = st.columns(4)
+        
+        total_media = sum(p['media_count'] for p in all_people)
+        total_images = sum(p['image_count'] for p in all_people)
+        total_videos = sum(p['video_count'] for p in all_people)
+        total_comments = sum(p['comment_count'] for p in all_people)
+        avg_ratings = [p['avg_rating'] for p in all_people if p['avg_rating'] > 0]
+        avg_rating = sum(avg_ratings) / len(avg_ratings) if avg_ratings else 0
+        
+        with col1:
+            st.metric("Total People", len(all_people))
+        with col2:
+            st.metric("Total Media", total_media)
+        with col3:
+            st.metric("Total Comments", total_comments)
+        with col4:
+            st.metric("Average Rating", f"{avg_rating:.1f}")
+        
+        st.divider()
+        
+        # Charts
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📊 Media Distribution")
+            
+            # Prepare data for chart
+            labels = ['Images', 'Videos']
+            sizes = [total_images, total_videos]
+            
+            if total_media > 0:
+                chart_data = pd.DataFrame({
+                    'Type': labels,
+                    'Count': sizes
+                })
+                st.bar_chart(chart_data.set_index('Type'))
+        
+        with col2:
+            st.subheader("👥 Media per Person")
+            
+            # Prepare data for chart
+            people_names = [p['display_name'] for p in all_people]
+            media_counts = [p['media_count'] for p in all_people]
+            
+            if media_counts:
+                chart_data = pd.DataFrame({
+                    'Person': people_names,
+                    'Media': media_counts
+                })
+                st.bar_chart(chart_data.set_index('Person'))
+        
+        # Detailed table
+        st.divider()
+        st.subheader("👥 People Details")
+        
+        table_data = []
+        for person in all_people:
+            table_data.append({
+                'Name': person['display_name'],
+                'Total Media': person['media_count'],
+                'Images': person['image_count'],
+                'Videos': person['video_count'],
+                'Comments': person['comment_count'],
+                'Avg Rating': f"{person['avg_rating']:.1f}",
+                'Last Activity': person.get('last_activity', 'Never')
+            })
+        
+        if table_data:
+            df = pd.DataFrame(table_data)
+            st.dataframe(df, use_container_width=True)
+            
+            # Export button
+            if st.button("📊 Export Statistics"):
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name="photo_video_album_stats.csv",
+                    mime="text/csv"
+                )
+    
+    def render_settings_page(self):
+        """Render settings page"""
+        st.title("⚙️ Settings")
+        
+        tabs = st.tabs(["Application", "User", "Database", "Advanced"])
+        
+        with tabs[0]:  # Application
+            st.subheader("Application Settings")
+            
+            # Directory settings
+            with st.expander("📁 Directory Settings"):
+                st.info(f"**Data Directory:** {Config.DATA_DIR}")
+                st.info(f"**Thumbnail Directory:** {Config.THUMBNAIL_DIR}")
+                st.info(f"**Video Thumbnail Directory:** {Config.VIDEO_THUMBNAIL_DIR}")
+                st.info(f"**Database Directory:** {Config.DB_DIR}")
+                
+                if st.button("Create Missing Directories"):
+                    Config.init_directories()
+                    st.success("Directories created/verified!")
+            
+            # Image settings
+            with st.expander("🖼️ Image Settings"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_thumb_size = st.number_input("Thumbnail Width", value=Config.THUMBNAIL_SIZE[0], min_value=100, max_value=800)
+                    Config.THUMBNAIL_SIZE = (int(new_thumb_size), int(new_thumb_size))
+                with col2:
+                    new_preview_size = st.number_input("Preview Width", value=Config.PREVIEW_SIZE[0], min_value=400, max_value=1200)
+                    Config.PREVIEW_SIZE = (int(new_preview_size), int(new_preview_size))
+                
+                if st.button("Apply Image Settings"):
+                    st.success("Image settings updated!")
+            
+            # Video settings
+            with st.expander("🎬 Video Settings"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_video_thumb_size = st.number_input("Video Thumbnail Width", value=Config.VIDEO_THUMBNAIL_SIZE[0], min_value=100, max_value=800)
+                    Config.VIDEO_THUMBNAIL_SIZE = (int(new_video_thumb_size), int(new_video_thumb_size))
+                with col2:
+                    max_video_size = st.number_input("Max Video Size (MB)", value=Config.MAX_VIDEO_SIZE // (1024*1024), min_value=10, max_value=500)
+                    Config.MAX_VIDEO_SIZE = int(max_video_size) * 1024 * 1024
+                
+                if st.button("Apply Video Settings"):
+                    st.success("Video settings updated!")
+            
+            # Gallery settings
+            with st.expander("📁 Gallery Settings"):
+                items_per_page = st.number_input("Items per Page", value=Config.ITEMS_PER_PAGE, min_value=1, max_value=100)
+                grid_columns = st.number_input("Grid Columns", value=Config.GRID_COLUMNS, min_value=1, max_value=8)
+                
+                Config.ITEMS_PER_PAGE = int(items_per_page)
+                Config.GRID_COLUMNS = int(grid_columns)
+                
+                if st.button("Apply Gallery Settings"):
+                    st.success("Gallery settings updated!")
+        
+        with tabs[1]:  # User
+            st.subheader("User Settings")
+            
+            current_username = st.session_state['username']
+            current_role = st.session_state['user_role']
+            
+            new_username = st.text_input("Username", value=current_username)
+            new_role = st.selectbox(
+                "Role",
+                [role.value for role in UserRoles],
+                index=[role.value for role in UserRoles].index(current_role)
+            )
+            
+            if st.button("Update User Settings"):
+                st.session_state['username'] = new_username
+                st.session_state['user_role'] = new_role
+                st.success("User settings updated!")
+        
+        with tabs[2]:  # Database
+            st.subheader("Database Management")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🔄 Rebuild Database", help="Recreate all database tables (data will be preserved)"):
+                    try:
+                        self.manager.db._init_database()
+                        st.success("Database rebuilt successfully!")
+                    except Exception as e:
+                        st.error(f"Error rebuilding database: {str(e)}")
+                
+                if st.button("📊 Optimize Database", help="Run database optimization commands"):
+                    try:
+                        with self.manager.db.get_connection() as conn:
+                            conn.execute("VACUUM")
+                            conn.execute("ANALYZE")
+                        st.success("Database optimized!")
+                    except Exception as e:
+                        st.error(f"Error optimizing database: {str(e)}")
+            
+            with col2:
+                if st.button("🗑️ Clear All Data", help="WARNING: This will delete all data!"):
+                    if st.checkbox("I understand this will delete ALL data"):
+                        try:
+                            import shutil
+                            # Remove database file
+                            if self.manager.db.db_path.exists():
+                                os.remove(self.manager.db.db_path)
+                            # Reinitialize database
+                            self.manager.db = DatabaseManager()
+                            # Clear cache
+                            self.manager.cache.clear()
+                            st.success("All data cleared!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error clearing data: {str(e)}")
+                
+                db_size = self.manager.db.db_path.stat().st_size if self.manager.db.db_path.exists() else 0
+                st.info(f"**Database Size:** {db_size / (1024*1024):.2f} MB")
+        
+        with tabs[3]:  # Advanced
+            st.subheader("Advanced Settings")
+            
+            # Cache settings
+            with st.expander("💾 Cache Settings"):
+                cache_ttl = st.number_input("Cache TTL (seconds)", value=Config.CACHE_TTL, min_value=60, max_value=86400)
+                Config.CACHE_TTL = int(cache_ttl)
+                
+                cache_size = len(self.manager.cache._cache)
+                video_cache_size = len(self.manager.cache._video_cache)
+                st.info(f"**Cache Items:** {cache_size}")
+                st.info(f"**Video Cache Items:** {video_cache_size}")
+                
+                if st.button("Clear All Cache"):
+                    self.manager.cache.clear()
+                    st.success("Cache cleared!")
+                
+                if st.button("Clear Video Cache"):
+                    self.manager.cache.clear_video_cache()
+                    st.success("Video cache cleared!")
+            
+            # Performance settings
+            with st.expander("⚡ Performance"):
+                st.checkbox("Enable lazy loading", value=True)
+                st.checkbox("Enable background processing", value=True)
+                st.checkbox("Use compression for thumbnails", value=True)
+            
+            # Debug settings
+            with st.expander("🐛 Debug"):
+                debug_mode = st.checkbox("Enable debug mode", value=False)
+                if debug_mode:
+                    st.warning("Debug mode enabled. Additional logging will be shown.")
+                
+                if st.button("Show Session State"):
+                    st.write(st.session_state)
+                
+                if st.button("Show Configuration"):
+                    st.write({
+                        'APP_NAME': Config.APP_NAME,
+                        'VERSION': Config.VERSION,
+                        'DATA_DIR': str(Config.DATA_DIR),
+                        'THUMBNAIL_SIZE': Config.THUMBNAIL_SIZE,
+                        'VIDEO_THUMBNAIL_SIZE': Config.VIDEO_THUMBNAIL_SIZE,
+                        'ITEMS_PER_PAGE': Config.ITEMS_PER_PAGE,
+                        'CACHE_TTL': Config.CACHE_TTL,
+                        'MAX_VIDEO_SIZE': Config.MAX_VIDEO_SIZE
+                    })
+    
+    def render_import_export_page(self):
+        """Render import/export page"""
+        st.title("📤 Import/Export")
+        
+        tabs = st.tabs(["Export", "Import", "Backup"])
+        
+        with tabs[0]:  # Export
+            st.subheader("Export Data")
+            
+            export_format = st.selectbox(
+                "Export Format",
+                ["CSV", "JSON", "Excel"],
+                key="export_format"
+            )
+            
+            # Filter options
+            col1, col2 = st.columns(2)
+            with col1:
+                export_people = st.multiselect(
+                    "Select People",
+                    [p['display_name'] for p in self.manager.db.get_all_people()],
+                    key="export_people"
+                )
+            with col2:
+                media_types = st.multiselect(
+                    "Media Types",
+                    ["Image", "Video"],
+                    default=["Image", "Video"],
+                    key="export_media_types"
+                )
+            
+            if st.button("Generate Export", type="primary"):
+                with st.spinner("Generating export file..."):
+                    # Prepare export data
+                    try:
+                        with sqlite3.connect(self.manager.db.db_path) as conn:
+                            # Build query
+                            conditions = []
+                            params = []
+                            
+                            if export_people:
+                                placeholders = ','.join(['?' for _ in export_people])
+                                conditions.append(f"p.display_name IN ({placeholders})")
+                                params.extend(export_people)
+                            
+                            if media_types:
+                                media_type_values = [mt.lower() for mt in media_types]
+                                placeholders = ','.join(['?' for _ in media_type_values])
+                                conditions.append(f"m.media_type IN ({placeholders})")
+                                params.extend(media_type_values)
+                            
+                            where_clause = " AND ".join(conditions) if conditions else "1=1"
+                            
+                            query = f'''
+                            SELECT 
+                                ae.entry_id,
+                                ae.caption,
+                                ae.description,
+                                ae.location,
+                                ae.date_taken,
+                                ae.tags,
+                                ae.privacy_level,
+                                ae.created_at,
+                                p.display_name as person_name,
+                                m.filename,
+                                m.media_type,
+                                m.file_size,
+                                m.format,
+                                m.duration,
+                                m.width,
+                                m.height,
+                                (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating,
+                                (SELECT COUNT(*) FROM comments c WHERE c.entry_id = ae.entry_id) as comment_count
+                            FROM album_entries ae
+                            JOIN people p ON ae.person_id = p.person_id
+                            JOIN media m ON ae.media_id = m.media_id
+                            WHERE {where_clause}
+                            ORDER BY ae.created_at DESC
+                            '''
+                            
+                            df = pd.read_sql_query(query, conn, params=params)
+                            
+                            if export_format == 'csv':
+                                output = io.StringIO()
+                                df.to_csv(output, index=False)
+                                export_data = io.BytesIO(output.getvalue().encode('utf-8'))
+                            elif export_format == 'json':
+                                output = io.StringIO()
+                                df.to_json(output, orient='records', indent=2)
+                                export_data = io.BytesIO(output.getvalue().encode('utf-8'))
+                            elif export_format == 'excel':
+                                output = io.BytesIO()
+                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    df.to_excel(writer, sheet_name='Album Data', index=False)
+                                export_data = output
+                            
+                            if export_data:
+                                file_ext = export_format.lower()
+                                if file_ext == "excel":
+                                    file_ext = "xlsx"
+                                
+                                st.download_button(
+                                    label=f"Download {export_format} File",
+                                    data=export_data,
+                                    file_name=f"photo_video_album_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.{file_ext}",
+                                    mime={
+                                        "csv": "text/csv",
+                                        "json": "application/json",
+                                        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    }[export_format.lower()]
+                                )
+                    except Exception as e:
+                        st.error(f"Error generating export: {str(e)}")
+        
+        with tabs[1]:  # Import
+            st.subheader("Import Data")
+            
+            st.info("""
+            **Import Format:** CSV, JSON, or Excel files with the following columns:
+            - `caption` (required): Media caption
+            - `person_name` (required): Name of the person
+            - `filename` (required): Media filename (must exist in person's folder)
+            - `media_type` (required): 'image' or 'video'
+            - `description`: Media description
+            - `location`: Location where media was taken
+            - `tags`: Comma-separated tags
+            - `privacy_level`: public/private
+            - `duration`: Video duration in seconds (for videos)
+            """)
+            
+            import_file = st.file_uploader(
+                "Choose import file",
+                type=['csv', 'json', 'xlsx', 'xls'],
+                key="import_file"
+            )
+            
+            if import_file:
+                file_ext = import_file.name.split('.')[-1].lower()
+                if file_ext == 'xls':
+                    file_ext = 'excel'
+                
+                if st.button("Import Data", type="primary"):
+                    with st.spinner("Importing data..."):
+                        # Read file
+                        try:
+                            if file_ext == 'csv':
+                                df = pd.read_csv(io.BytesIO(import_file.getvalue()))
+                            elif file_ext == 'json':
+                                df = pd.read_json(io.BytesIO(import_file.getvalue()))
+                            elif file_ext == 'excel':
+                                df = pd.read_excel(io.BytesIO(import_file.getvalue()))
+                            
+                            # Validate required columns
+                            required_columns = ['caption', 'person_name', 'filename', 'media_type']
+                            missing_columns = [col for col in required_columns if col not in df.columns]
+                            
+                            if missing_columns:
+                                st.error(f"Missing required columns: {missing_columns}")
+                                return
+                            
+                            success_count = 0
+                            error_count = 0
+                            
+                            for _, row in df.iterrows():
+                                try:
+                                    # Find or create person
+                                    existing_person = self.manager.db.get_person_by_folder(
+                                        row['person_name'].lower().replace(' ', '-')
+                                    )
+                                    
+                                    if not existing_person:
+                                        # Create new person
+                                        person_profile = PersonProfile(
+                                            person_id=str(uuid.uuid4()),
+                                            folder_name=row['person_name'].lower().replace(' ', '-'),
+                                            display_name=row['person_name'],
+                                            bio=f"Photos/Videos of {row['person_name']}",
+                                            birth_date=None,
+                                            relationship="Family/Friend",
+                                            contact_info="",
+                                            social_links={},
+                                            profile_image=None,
+                                            created_at=datetime.datetime.now()
+                                        )
+                                        self.manager.db.add_person(person_profile)
+                                        person_id = person_profile.person_id
+                                    else:
+                                        person_id = existing_person['person_id']
+                                    
+                                    # Check if media file exists
+                                    media_path = Config.DATA_DIR / person_profile.folder_name / row['filename']
+                                    if not media_path.exists():
+                                        st.warning(f"Media file not found: {media_path}")
+                                        error_count += 1
+                                        continue
+                                    
+                                    # Process media
+                                    metadata = MediaMetadata.from_file(media_path)
+                                    
+                                    # Create thumbnail
+                                    thumbnail_path = None
+                                    video_thumbnail_path = None
+                                    if metadata.media_type == MediaType.IMAGE.value:
+                                        thumbnail_path = self.manager.media_processor.create_thumbnail(media_path)
+                                    elif metadata.media_type == MediaType.VIDEO.value:
+                                        video_thumbnail_path = self.manager.media_processor.create_thumbnail(media_path)
+                                    
+                                    # Add to database
+                                    self.manager.db.add_media(metadata, 
+                                                             str(thumbnail_path) if thumbnail_path else None,
+                                                             str(video_thumbnail_path) if video_thumbnail_path else None)
+                                    
+                                    # Parse tags
+                                    tags = []
+                                    if 'tags' in row and pd.notna(row['tags']):
+                                        if isinstance(row['tags'], str):
+                                            tags = [tag.strip() for tag in row['tags'].split(',') if tag.strip()]
+                                    
+                                    # Create album entry
+                                    album_entry = AlbumEntry(
+                                        entry_id=str(uuid.uuid4()),
+                                        media_id=metadata.media_id,
+                                        person_id=person_id,
+                                        caption=row['caption'],
+                                        description=row.get('description', ''),
+                                        location=row.get('location', ''),
+                                        date_taken=row.get('date_taken'),
+                                        tags=tags,
+                                        privacy_level=row.get('privacy_level', 'public'),
+                                        created_by=st.session_state['username'],
+                                        created_at=datetime.datetime.now(),
+                                        updated_at=datetime.datetime.now()
+                                    )
+                                    
+                                    self.manager.db.add_album_entry(album_entry)
+                                    success_count += 1
+                                    
+                                except Exception as e:
+                                    error_count += 1
+                                    st.error(f"Error processing row: {str(e)}")
+                            
+                            # Clear cache
+                            self.manager.cache.clear()
+                            
+                            st.success(f"Import completed: {success_count} successful, {error_count} failed")
+                            if success_count > 0:
+                                st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error importing data: {str(e)}")
+        
+        with tabs[2]:  # Backup
+            st.subheader("Backup & Restore")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### Create Backup")
+                backup_name = st.text_input(
+                    "Backup Name",
+                    value=f"backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    key="backup_name"
+                )
+                
+                if st.button("🔒 Create Backup", use_container_width=True):
+                    try:
+                        import shutil
+                        # Create backup of database
+                        backup_path = Config.EXPORT_DIR / f"{backup_name}.db"
+                        shutil.copy2(self.manager.db.db_path, backup_path)
+                        st.success(f"Backup created: {backup_path}")
+                        
+                        # Offer download
+                        with open(backup_path, 'rb') as f:
+                            st.download_button(
+                                label="Download Backup",
+                                data=f,
+                                file_name=backup_path.name,
+                                mime="application/x-sqlite3"
+                            )
+                    except Exception as e:
+                        st.error(f"Error creating backup: {str(e)}")
+            
+            with col2:
+                st.markdown("### Restore Backup")
+                backup_file = st.file_uploader(
+                    "Choose backup file",
+                    type=['db', 'sqlite', 'sqlite3'],
+                    key="restore_file"
+                )
+                
+                if backup_file:
+                    if st.button("⚠️ Restore Backup", type="secondary", use_container_width=True):
+                        st.warning("This will replace your current database!")
+                        if st.checkbox("I understand this will overwrite all current data"):
+                            try:
+                                import shutil
+                                # Create backup of current database first
+                                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                                current_backup = Config.EXPORT_DIR / f"pre_restore_{timestamp}.db"
+                                shutil.copy2(self.manager.db.db_path, current_backup)
+                                
+                                # Write uploaded file
+                                with open(self.manager.db.db_path, 'wb') as f:
+                                    f.write(backup_file.getvalue())
+                                
+                                # Reinitialize manager
+                                self.manager = AlbumManager()
+                                st.success("Backup restored successfully!")
+                                st.info(f"Previous database backed up to: {current_backup}")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error restoring backup: {str(e)}")
     
     def render_main(self):
         """Main application renderer"""
