@@ -4,7 +4,7 @@ librosa
 soundfile
 numpy
 pydub
-opencv-python
+opencv-python-headless
 moviepy
 scipy
 rembg
