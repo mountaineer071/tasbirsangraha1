@@ -5,6 +5,7 @@ soundfile
 numpy
 pydub
 opencv-python
+moviepy
 scipy
 rembg
 scikit-image
