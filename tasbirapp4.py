@@ -1980,6 +1980,10 @@ class EnhancedChatUI:
         active_devices = EnhancedChatManager.get_active_devices()
         user_devices = [d for d in active_devices if d['user_id'] == user.id]
         
+        multi_device_badge = ""
+        if len(user_devices) > 1:
+            multi_device_badge = f'<span class="multi-device-badge">{len(user_devices)} devices</span>'
+        
         st.markdown(f"""
         <div class="main-header">
             <h1 class="header-title">💬 TempChat Pro</h1>
@@ -1994,7 +1998,7 @@ class EnhancedChatUI:
                 </div>
                 <span>{user.username}</span>
                 <span class="status-{user.status.value}">•</span>
-                {len(user_devices) > 1 and f'<span class="multi-device-badge">{len(user_devices)} devices</span>' or ''}
+                {multi_device_badge}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -2250,7 +2254,7 @@ class EnhancedChatUI:
                                                         st.session_state.get('current_room', 'general')):
                         st.session_state.system_messages.append("Message deleted")
                         st.rerun()
-   
+    
     @staticmethod
     def _render_file_message(msg: Dict):
         """Render file message with preview"""
