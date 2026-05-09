@@ -1,9 +1,6 @@
 """
 COMPREHENSIVE WEB PHOTO & VIDEO ALBUM APPLICATION
-Version: 4.0.0 - Enhanced with Luxury Frames, Cipher Auth & UX Improvements
-Features: Table of Contents, Image/Video Gallery, Comments, Ratings, Metadata,
-          Search, Cipher-Based Password Auth, Luxury Photo Frames, Slideshow,
-          Breadcrumb Navigation, Download, Fullscreen View, Frame Style Selector
+Version: 5.0.0 - Luxury Frames, Cipher Auth, HD Slider, Directory Panel
 """
 import streamlit as st
 from pathlib import Path
@@ -33,9 +30,6 @@ import mimetypes
 import warnings
 warnings.filterwarnings('ignore')
 
-# ============================================================================
-# VIDEO PROCESSING IMPORTS
-# ============================================================================
 try:
     import cv2
     import moviepy.editor as mp
@@ -47,78 +41,42 @@ except ImportError:
 # ============================================================================
 # CIPHER-BASED PASSWORD AUTHENTICATION
 # ============================================================================
-# Digit-to-letter cipher: a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=0
-_CIPHER_MAP = {
-    '0': 'j', '1': 'a', '2': 'b', '3': 'c', '4': 'd',
-    '5': 'e', '6': 'f', '7': 'g', '8': 'h', '9': 'i'
-}
-_REVERSE_CIPHER = {v: k for k, v in _CIPHER_MAP.items()}
+# Digit-to-letter cipher used ONLY to obfuscate the password inside the
+# source code so that casual readers cannot see the real numeric key.
+# a=1, b=2, c=3, d=4, e=5, f=6, g=7, h=8, i=9, j=0
+_CIPHER = {'0': 'j', '1': 'a', '2': 'b', '3': 'c', '4': 'd',
+           '5': 'e', '6': 'f', '7': 'g', '8': 'h', '9': 'i'}
+_REV = {v: k for k, v in _CIPHER.items()}
 
-# The access code stored as the alphabet equivalent of the date of birth 19870505
-# 1→a, 9→i, 8→h, 7→g, 0→j, 5→e, 0→j, 5→e  =>  "aihgjeje"
-# Reading the code alone does not reveal it is a date
-_ACCESS_CODE = "aihgjeje"
+# Stored in alphabet form so the numeric password is never visible in code.
+# Decodes: a→1  i→9  h→8  g→7  j→0  e→5  j→0  e→5  →  "19870505"
+_ACCESS_CIPHER = "aihgjeje"
 
 
-def _decode_input(user_input: str) -> str:
-    """Convert any numeric digits in user input to their letter equivalents.
-    This allows the user to type either the numeric form (e.g. 19870505)
-    or the alphabetic form (e.g. aihgjeje) — both resolve to the same key.
-    """
-    result = ""
-    for ch in user_input.strip().lower():
-        if ch in _CIPHER_MAP:
-            result += _CIPHER_MAP[ch]
-        else:
-            result += ch
-    return result
+def _cipher_to_numeric(cipher: str) -> str:
+    """Decode the stored alphabet cipher back to the real numeric password."""
+    return "".join(_REV.get(ch, ch) for ch in cipher)
+
+
+_REAL_PASSWORD = _cipher_to_numeric(_ACCESS_CIPHER)
 
 
 def check_password():
-    """Cipher-based password gate.
-
-    • If the user types the numeric date 19870505 the digits are
-      automatically converted via the cipher (1→a, 9→i …) yielding
-      the stored access code and the gate opens.
-    • If the user types the alphabetic form aihgjeje directly it
-      also matches.
-    • The hint never mentions a date — it only shows the abstract
-      letter key so there is no indication that the code is a DOB.
-    """
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
-
     if st.session_state.authenticated:
         return True
 
-    # ── beautiful login page ──────────────────────────────────────────
     st.markdown("""
     <style>
-    .login-bg {
-        background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-        padding: 50px 30px;
-        border-radius: 20px;
-        text-align: center;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-        margin: 30px 0;
-    }
-    .login-title {
-        font-size: 2.4em;
-        font-weight: 800;
-        background: linear-gradient(90deg, #f9d423, #ff4e50);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 5px;
-    }
-    .login-sub {
-        color: #a0a0c0;
-        font-size: 1.1em;
-        margin-bottom: 30px;
-    }
-    .lock-icon {
-        font-size: 64px;
-        margin-bottom: 10px;
-    }
+    .login-bg{background:linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%);
+              padding:50px 30px;border-radius:20px;text-align:center;
+              box-shadow:0 20px 60px rgba(0,0,0,.4);margin:30px 0;}
+    .login-title{font-size:2.4em;font-weight:800;
+                 background:linear-gradient(90deg,#f9d423,#ff4e50);
+                 -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+    .login-sub{color:#a0a0c0;font-size:1.1em;margin-bottom:30px;}
+    .lock-icon{font-size:64px;margin-bottom:10px;}
     </style>
     <div class="login-bg">
         <div class="lock-icon">🔐</div>
@@ -129,49 +87,39 @@ def check_password():
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        password = st.text_input(
-            "Access Key",
-            type="password",
-            key="password_input",
-            placeholder="Enter your access key",
-            label_visibility="collapsed"
-        )
-
+        password = st.text_input("Access Key", type="password", key="password_input",
+                                 placeholder="Enter your access key", label_visibility="collapsed")
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("🔓 Unlock", use_container_width=True, type="primary"):
-                decoded = _decode_input(password)
-                if decoded == _ACCESS_CODE:
+                # ONLY the numeric form unlocks – alphabet input is rejected
+                if password.strip().isdigit() and password.strip() == _REAL_PASSWORD:
                     st.session_state.authenticated = True
-                    st.success("✅ Access granted! Welcome back.")
-                    time.sleep(0.6)
+                    st.success("✅ Access granted!")
+                    time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("❌ Invalid access key. Please try again.")
-                    time.sleep(0.5)
-
+                    st.error("❌ Invalid access key.")
+                    time.sleep(0.4)
         with col_b:
             if st.button("🔄 Reset", use_container_width=True):
                 st.session_state.authenticated = False
                 st.rerun()
 
         with st.expander("🔑 Need a hint?"):
-            st.info(f"Access key: **`{_ACCESS_CODE}`**")
-            st.caption("Each letter maps to a unique digit (a↔1, b↔2 … j↔0). "
-                       "You may enter either the letter key or its numeric equivalent.")
-            # Deliberately no mention of "date" or "birth"
-
+            # Deliberately MISLEADING hint – does NOT reveal the actual key
+            st.info("💡 The access key is a **numeric** code — letters are not accepted.")
+            st.warning("🤔 Think of something personal and significant that you'd never forget.")
+            st.caption("It's 8 digits long. Only numbers work.")
     return False
 
 
 # ============================================================================
-# CONFIGURATION AND CONSTANTS
+# CONFIGURATION
 # ============================================================================
 class Config:
-    """Application configuration constants"""
     APP_NAME = "MemoryVault Pro+"
-    VERSION = "4.0.0"
-
+    VERSION = "5.0.0"
     BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     DATA_DIR = BASE_DIR / "data"
     THUMBNAIL_DIR = BASE_DIR / "thumbnails"
@@ -180,70 +128,52 @@ class Config:
     DB_DIR = BASE_DIR / "database"
     EXPORT_DIR = BASE_DIR / "exports"
     VIDEO_CACHE_DIR = BASE_DIR / "video_cache"
-
     METADATA_FILE = METADATA_DIR / "album_metadata.json"
     DB_FILE = DB_DIR / "album.db"
-
     THUMBNAIL_SIZE = (300, 300)
     PREVIEW_SIZE = (800, 800)
+    HD_SIZE = (1920, 1080)
     MAX_IMAGE_SIZE = 10 * 1024 * 1024
-
     MAX_VIDEO_SIZE = 100 * 1024 * 1024
     VIDEO_THUMBNAIL_SIZE = (300, 300)
     VIDEO_PREVIEW_SIZE = (800, 450)
     VIDEO_CACHE_SIZE = 50 * 1024 * 1024
     SUPPORTED_VIDEO_FORMATS = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv', '.m4v']
-
     ITEMS_PER_PAGE = 20
     GRID_COLUMNS = 4
-
     ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'} | set(SUPPORTED_VIDEO_FORMATS)
     MAX_COMMENT_LENGTH = 500
     MAX_CAPTION_LENGTH = 200
-
     CACHE_TTL = 3600
-
-    # Frame style options
-    FRAME_STYLES = [
-        "Elegant Gold",
-        "Polaroid",
-        "Modern Shadow",
-        "Dark Museum",
-        "Vintage",
-        "Gallery White"
-    ]
+    FRAME_STYLES = ["Elegant Gold", "Polaroid", "Modern Shadow", "Dark Museum", "Vintage", "Gallery White"]
     DEFAULT_FRAME_STYLE = "Elegant Gold"
+    SLIDER_THUMB_COUNT = 12
 
     @classmethod
     def init_directories(cls):
-        directories = [
-            cls.DATA_DIR, cls.THUMBNAIL_DIR, cls.VIDEO_THUMBNAIL_DIR,
-            cls.METADATA_DIR, cls.DB_DIR, cls.EXPORT_DIR, cls.VIDEO_CACHE_DIR
-        ]
-        for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
+        for d in [cls.DATA_DIR, cls.THUMBNAIL_DIR, cls.VIDEO_THUMBNAIL_DIR,
+                  cls.METADATA_DIR, cls.DB_DIR, cls.EXPORT_DIR, cls.VIDEO_CACHE_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
         if not any(cls.DATA_DIR.iterdir()):
             cls.create_sample_structure()
 
     @classmethod
     def create_sample_structure(cls):
-        sample_people = ["john-smith", "sarah-johnson", "michael-brown"]
-        for person in sample_people:
-            person_dir = cls.DATA_DIR / person
-            person_dir.mkdir(exist_ok=True)
-            readme_file = person_dir / "README.txt"
-            readme_file.write_text(f"Photos/Videos of {person.replace('-', ' ').title()}\nAdd your media here!")
-            sample_image_path = person_dir / "sample.jpg"
-            if not sample_image_path.exists():
+        for person in ["john-smith", "sarah-johnson", "michael-brown"]:
+            pd_dir = cls.DATA_DIR / person
+            pd_dir.mkdir(exist_ok=True)
+            (pd_dir / "README.txt").write_text(f"Photos of {person.replace('-',' ').title()}\n")
+            sp = pd_dir / "sample.jpg"
+            if not sp.exists():
                 try:
                     img = Image.new('RGB', (400, 300), color='#667eea')
                     draw = ImageDraw.Draw(img)
-                    draw.ellipse((150, 50, 250, 150), fill='#ffffff', outline='#4a5568')
-                    draw.rectangle((150, 150, 250, 280), fill='#ffffff', outline='#4a5568')
+                    draw.ellipse((150, 50, 250, 150), fill='#fff', outline='#4a5568')
+                    draw.rectangle((150, 150, 250, 280), fill='#fff', outline='#4a5568')
                     draw.text((120, 250), person.replace('-', ' ').title(), fill='#2d3748')
-                    img.save(sample_image_path)
-                except Exception as e:
-                    st.warning(f"Could not create sample image for {person}: {str(e)}")
+                    img.save(sp)
+                except Exception:
+                    pass
 
 
 class UserRoles(Enum):
@@ -268,238 +198,132 @@ class FrameStyle(Enum):
 
 
 # ============================================================================
-# CUSTOM CSS / FRAME RENDERER
+# FRAME RENDERER
 # ============================================================================
 class FrameRenderer:
-    """Generates luxury HTML/CSS frames for images and thumbnails."""
-
-    # ── gallery (thumbnail) frames ────────────────────────────────────
     @staticmethod
-    def wrap_thumbnail(image_src: str, caption: str = "",
-                       frame_style: str = "Elegant Gold",
-                       is_video: bool = False,
-                       duration: float = None) -> str:
-        """Return HTML wrapping a thumbnail in the chosen luxury frame."""
-        duration_badge = ""
+    def wrap_thumbnail(image_src: str, caption: str = "", frame_style: str = "Elegant Gold",
+                       is_video: bool = False, duration: float = None) -> str:
+        dur = ""
         if is_video and duration:
             m, s = int(duration // 60), int(duration % 60)
-            duration_badge = (
-                f'<div style="position:absolute;bottom:8px;right:8px;'
-                f'background:rgba(0,0,0,.75);color:#fff;padding:2px 7px;'
-                f'border-radius:4px;font-size:10px;font-weight:700;">'
-                f'{m:02d}:{s:02d}</div>'
-            )
-        play_icon = ''
+            dur = (f'<div style="position:absolute;bottom:8px;right:8px;'
+                   f'background:rgba(0,0,0,.75);color:#fff;padding:2px 7px;'
+                   f'border-radius:4px;font-size:10px;font-weight:700;">{m:02d}:{s:02d}</div>')
+        play = ''
         if is_video:
-            play_icon = (
-                '<div style="position:absolute;top:50%;left:50%;'
-                'transform:translate(-50%,-50%);font-size:36px;'
-                'color:#fff;opacity:.85;text-shadow:1px 1px 6px rgba(0,0,0,.6);">▶</div>'
-            )
+            play = ('<div style="position:absolute;top:50%;left:50%;'
+                    'transform:translate(-50%,-50%);font-size:36px;color:#fff;'
+                    'opacity:.85;text-shadow:1px 1px 6px rgba(0,0,0,.6);">▶</div>')
 
-        if frame_style == FrameStyle.ELEGANT_GOLD.value:
-            outer = (
+        styles = {
+            "Elegant Gold": (
                 'background:linear-gradient(135deg,#d4a574,#f0d9b5,#c9956b,#f0d9b5,#d4a574);'
                 'padding:8px;border-radius:6px;'
-                'box-shadow:0 6px 18px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.4);'
-            )
-            inner = (
-                'background:#fff;padding:6px;border-radius:3px;'
-                'box-shadow:inset 0 0 10px rgba(0,0,0,.06);'
-            )
-        elif frame_style == FrameStyle.POLAROID.value:
-            outer = (
-                'background:#fff;padding:10px 10px 38px 10px;'
-                'box-shadow:0 4px 12px rgba(0,0,0,.18);'
-                'border-radius:2px;'
-            )
-            inner = ''
-        elif frame_style == FrameStyle.MODERN_SHADOW.value:
-            outer = (
-                'background:transparent;padding:0;border-radius:12px;'
-                'box-shadow:0 8px 24px rgba(0,0,0,.15),0 2px 6px rgba(0,0,0,.08);'
-                'overflow:hidden;'
-            )
-            inner = ''
-        elif frame_style == FrameStyle.DARK_MUSEUM.value:
-            outer = (
-                'background:linear-gradient(145deg,#1a1a2e,#16213e);'
-                'padding:14px;border-radius:10px;'
-                'box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.06);'
-            )
-            inner = (
-                'background:#fff;padding:6px;border-radius:3px;'
-                'box-shadow:inset 0 0 12px rgba(0,0,0,.04);'
-            )
-        elif frame_style == FrameStyle.VINTAGE.value:
-            outer = (
-                'background:linear-gradient(135deg,#e8d5b7,#f5e6cc,#d4b896);'
-                'padding:10px;border-radius:4px;'
-                'box-shadow:0 4px 14px rgba(0,0,0,.2),inset 0 0 30px rgba(139,109,63,.15);'
-                'border:1px solid #c9a96e;'
-            )
-            inner = (
-                'background:#faf5ee;padding:5px;border-radius:2px;'
-            )
-        elif frame_style == FrameStyle.GALLERY_WHITE.value:
-            outer = (
-                'background:#fafafa;padding:12px;border-radius:2px;'
-                'box-shadow:0 2px 10px rgba(0,0,0,.08);'
-                'border:1px solid #e8e8e8;'
-            )
-            inner = ''
-        else:
-            outer = 'padding:6px;'
-            inner = ''
-
-        caption_html = ""
-        if frame_style == FrameStyle.POLAROID.value and caption:
-            caption_html = (
-                f'<div style="text-align:center;padding-top:8px;'
-                f'font-family:Georgia,serif;font-size:12px;color:#444;'
-                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-                f'{caption}</div>'
-            )
-
-        html = f"""
+                'box-shadow:0 6px 18px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.4);',
+                'background:#fff;padding:6px;border-radius:3px;box-shadow:inset 0 0 10px rgba(0,0,0,.06);'),
+            "Polaroid": ('background:#fff;padding:10px 10px 38px 10px;'
+                         'box-shadow:0 4px 12px rgba(0,0,0,.18);border-radius:2px;', ''),
+            "Modern Shadow": ('background:transparent;padding:0;border-radius:12px;'
+                              'box-shadow:0 8px 24px rgba(0,0,0,.15);overflow:hidden;', ''),
+            "Dark Museum": ('background:linear-gradient(145deg,#1a1a2e,#16213e);padding:14px;'
+                            'border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,.45),'
+                            '0 0 0 1px rgba(255,255,255,.06);',
+                            'background:#fff;padding:6px;border-radius:3px;box-shadow:inset 0 0 12px rgba(0,0,0,.04);'),
+            "Vintage": ('background:linear-gradient(135deg,#e8d5b7,#f5e6cc,#d4b896);padding:10px;'
+                        'border-radius:4px;box-shadow:0 4px 14px rgba(0,0,0,.2),'
+                        'inset 0 0 30px rgba(139,109,63,.15);border:1px solid #c9a96e;',
+                        'background:#faf5ee;padding:5px;border-radius:2px;'),
+            "Gallery White": ('background:#fafafa;padding:12px;border-radius:2px;'
+                              'box-shadow:0 2px 10px rgba(0,0,0,.08);border:1px solid #e8e8e8;', ''),
+        }
+        outer, inner = styles.get(frame_style, styles["Elegant Gold"])
+        cap_html = ""
+        if frame_style == "Polaroid" and caption:
+            cap_html = (f'<div style="text-align:center;padding-top:8px;font-family:Georgia,serif;'
+                        f'font-size:12px;color:#444;white-space:nowrap;overflow:hidden;'
+                        f'text-overflow:ellipsis;">{caption}</div>')
+        return f"""
         <div style="{outer}position:relative;transition:transform .25s ease,box-shadow .25s ease;"
              onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 12px 32px rgba(0,0,0,.3)'"
              onmouseout="this.style.transform='translateY(0)';this.style.boxShadow=''">
             <div style="{inner}position:relative;overflow:hidden;border-radius:3px;">
                 <img src="{image_src}" style="width:100%;height:200px;object-fit:cover;display:block;border-radius:2px;">
-                {play_icon}
-                {duration_badge}
-            </div>
-            {caption_html}
-        </div>
-        """
-        return html
+                {play}{dur}
+            </div>{cap_html}
+        </div>"""
 
-    # ── detail-view (full-size) frames ────────────────────────────────
     @staticmethod
     def wrap_detail(image_src: str, frame_style: str = "Elegant Gold") -> str:
-        """Return HTML wrapping a full-size image in an ornate frame."""
-        if frame_style == FrameStyle.ELEGANT_GOLD.value:
-            outer = (
+        styles = {
+            "Elegant Gold": (
                 'background:linear-gradient(135deg,#b8860b,#daa520,#ffd700,#daa520,#b8860b);'
-                'padding:12px;border-radius:8px;'
-                'box-shadow:0 16px 48px rgba(0,0,0,.35),inset 0 2px 0 rgba(255,255,255,.3),'
-                'inset 0 -2px 0 rgba(0,0,0,.2);'
-            )
-            mat = (
-                'background:#fffff5;padding:18px;border-radius:4px;'
-                'box-shadow:inset 0 0 20px rgba(0,0,0,.06);'
-            )
-        elif frame_style == FrameStyle.POLAROID.value:
-            outer = (
-                'background:#fff;padding:18px 18px 64px 18px;'
-                'box-shadow:0 8px 28px rgba(0,0,0,.18);border-radius:2px;'
-            )
-            mat = ''
-        elif frame_style == FrameStyle.MODERN_SHADOW.value:
-            outer = (
-                'background:transparent;padding:0;border-radius:14px;'
-                'box-shadow:0 12px 40px rgba(0,0,0,.18);overflow:hidden;'
-            )
-            mat = ''
-        elif frame_style == FrameStyle.DARK_MUSEUM.value:
-            outer = (
-                'background:linear-gradient(160deg,#0d0d1a,#1a1a30,#0d0d1a);'
-                'padding:24px;border-radius:14px;'
-                'box-shadow:0 20px 60px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.04);'
-            )
-            mat = (
-                'background:#fffff8;padding:16px;border-radius:4px;'
-                'box-shadow:inset 0 0 16px rgba(0,0,0,.04);'
-            )
-        elif frame_style == FrameStyle.VINTAGE.value:
-            outer = (
-                'background:linear-gradient(135deg,#d4b896,#e8d5b7,#c9a96e);'
-                'padding:14px;border-radius:4px;'
-                'box-shadow:0 10px 30px rgba(0,0,0,.25),inset 0 0 40px rgba(139,109,63,.12);'
-                'border:2px solid #a08050;'
-            )
-            mat = (
-                'background:#faf5ee;padding:12px;border-radius:2px;'
-                'box-shadow:inset 0 0 10px rgba(0,0,0,.04);'
-            )
-        elif frame_style == FrameStyle.GALLERY_WHITE.value:
-            outer = (
-                'background:#fff;padding:20px;border-radius:4px;'
-                'box-shadow:0 4px 20px rgba(0,0,0,.08);'
-                'border:1px solid #e0e0e0;'
-            )
-            mat = ''
-        else:
-            outer = 'padding:8px;'
-            mat = ''
+                'padding:12px;border-radius:8px;box-shadow:0 16px 48px rgba(0,0,0,.35),'
+                'inset 0 2px 0 rgba(255,255,255,.3),inset 0 -2px 0 rgba(0,0,0,.2);',
+                'background:#fffff5;padding:18px;border-radius:4px;box-shadow:inset 0 0 20px rgba(0,0,0,.06);'),
+            "Polaroid": ('background:#fff;padding:18px 18px 64px 18px;'
+                         'box-shadow:0 8px 28px rgba(0,0,0,.18);border-radius:2px;', ''),
+            "Modern Shadow": ('background:transparent;padding:0;border-radius:14px;'
+                              'box-shadow:0 12px 40px rgba(0,0,0,.18);overflow:hidden;', ''),
+            "Dark Museum": ('background:linear-gradient(160deg,#0d0d1a,#1a1a30,#0d0d1a);padding:24px;'
+                            'border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.5),'
+                            '0 0 0 1px rgba(255,255,255,.04);',
+                            'background:#fffff8;padding:16px;border-radius:4px;box-shadow:inset 0 0 16px rgba(0,0,0,.04);'),
+            "Vintage": ('background:linear-gradient(135deg,#d4b896,#e8d5b7,#c9a96e);padding:14px;'
+                        'border-radius:4px;box-shadow:0 10px 30px rgba(0,0,0,.25),'
+                        'inset 0 0 40px rgba(139,109,63,.12);border:2px solid #a08050;',
+                        'background:#faf5ee;padding:12px;border-radius:2px;box-shadow:inset 0 0 10px rgba(0,0,0,.04);'),
+            "Gallery White": ('background:#fff;padding:20px;border-radius:4px;'
+                              'box-shadow:0 4px 20px rgba(0,0,0,.08);border:1px solid #e0e0e0;', ''),
+        }
+        outer, inner = styles.get(frame_style, styles["Elegant Gold"])
+        return f"""<div style="{outer}"><div style="{inner}">
+            <img src="{image_src}" style="width:100%;display:block;border-radius:2px;">
+        </div></div>"""
 
-        return f"""
-        <div style="{outer}">
-            <div style="{mat}">
-                <img src="{image_src}" style="width:100%;display:block;border-radius:2px;">
-            </div>
-        </div>
-        """
-
-    # ── inject global CSS once ────────────────────────────────────────
     @staticmethod
     def inject_global_css():
         st.markdown("""
         <style>
-        /* Smooth scrolling & nicer base font */
-        .stApp {{ scroll-behavior: smooth; }}
-
-        /* Breadcrumb bar */
-        .breadcrumb {{ display:flex; align-items:center; gap:6px;
-                       font-size:13px; color:#888; margin-bottom:16px;
-                       flex-wrap:wrap; }}
-        .breadcrumb a {{ color:#667eea; text-decoration:none; }}
-        .breadcrumb a:hover {{ text-decoration:underline; }}
-        .breadcrumb .sep {{ color:#ccc; }}
-
-        /* Slideshow overlay */
-        .slideshow-bar {{ display:flex; align-items:center; justify-content:center;
-                          gap:12px; padding:10px 0; }}
-        .slideshow-bar button {{ background:#667eea; color:#fff; border:none;
-                                  padding:6px 16px; border-radius:20px; cursor:pointer;
-                                  font-size:14px; }}
-        .slideshow-bar button:hover {{ background:#764ba2; }}
-
-        /* Frame hover lift */
-        .frame-lift {{ transition: transform .25s ease, box-shadow .25s ease; }}
-        .frame-lift:hover {{ transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,.3) !important; }}
-
-        /* Rating stars animation */
-        @keyframes starPop {{
-            0% {{ transform: scale(1); }}
-            50% {{ transform: scale(1.25); }}
-            100% {{ transform: scale(1); }}
-        }}
-
-        /* Fullscreen overlay */
-        .fullscreen-overlay {{ position:fixed; top:0; left:0; width:100vw; height:100vh;
-                               background:rgba(0,0,0,.92); z-index:9999;
-                               display:flex; align-items:center; justify-content:center;
-                               cursor:zoom-out; }}
-        .fullscreen-overlay img {{ max-width:95vw; max-height:92vh; object-fit:contain;
-                                   border-radius:4px; box-shadow:0 0 60px rgba(0,0,0,.5); }}
+        .stApp{scroll-behavior:smooth;}
+        .breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#888;margin-bottom:16px;flex-wrap:wrap;}
+        .breadcrumb a{color:#667eea;text-decoration:none;}
+        .breadcrumb a:hover{text-decoration:underline;}
+        .breadcrumb .sep{color:#ccc;}
+        .fullscreen-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.92);
+            z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;}
+        .fullscreen-overlay img{max-width:95vw;max-height:92vh;object-fit:contain;border-radius:4px;
+            box-shadow:0 0 60px rgba(0,0,0,.5);}
+        .slider-nav-btn{background:rgba(102,126,234,.85);color:#fff;border:none;padding:12px 20px;
+            border-radius:50%;cursor:pointer;font-size:22px;transition:background .2s,transform .2s;
+            box-shadow:0 4px 12px rgba(0,0,0,.2);}
+        .slider-nav-btn:hover{background:#764ba2;transform:scale(1.1);}
+        .thumb-strip{display:flex;gap:6px;overflow-x:auto;padding:8px 0;scroll-behavior:smooth;
+            -webkit-overflow-scrolling:touch;}
+        .thumb-strip::-webkit-scrollbar{height:6px;}
+        .thumb-strip::-webkit-scrollbar-thumb{background:#667eea;border-radius:3px;}
+        .thumb-item{min-width:72px;height:54px;border-radius:4px;overflow:hidden;cursor:pointer;
+            border:2px solid transparent;transition:border-color .2s,transform .2s;opacity:.6;}
+        .thumb-item:hover{opacity:1;transform:scale(1.05);}
+        .thumb-item.active{border-color:#667eea;opacity:1;box-shadow:0 2px 8px rgba(102,126,234,.4);}
+        .thumb-item img{width:100%;height:100%;object-fit:cover;display:block;}
+        .dir-tree-item{padding:6px 10px;border-radius:6px;cursor:pointer;transition:background .15s;
+            display:flex;align-items:center;gap:8px;font-size:13px;}
+        .dir-tree-item:hover{background:rgba(102,126,234,.1);}
+        .dir-tree-item.active{background:rgba(102,126,234,.15);font-weight:600;}
+        .dir-file-item{padding:4px 10px 4px 28px;border-radius:4px;cursor:pointer;transition:background .15s;
+            display:flex;align-items:center;gap:6px;font-size:12px;color:#666;}
+        .dir-file-item:hover{background:rgba(102,126,234,.08);color:#333;}
+        .slider-counter{text-align:center;color:#888;font-size:13px;padding:4px 0;}
         </style>
         """, unsafe_allow_html=True)
 
 
-# ============================================================================
-# BREADCRUMB HELPER
-# ============================================================================
 def render_breadcrumb(trail: List[Tuple[str, str]]):
-    """Render a breadcrumb navigation bar.
-    trail: list of (label, page_key) tuples. Last item is current page (no link).
-    """
     parts = []
     for i, (label, key) in enumerate(trail):
         if i < len(trail) - 1:
-            parts.append(f'<a href="#" data-key="{key}">{label}</a>')
-            parts.append('<span class="sep">›</span>')
+            parts.append(f'<a href="#" data-key="{key}">{label}</a><span class="sep">›</span>')
         else:
             parts.append(f'<span style="color:#333;font-weight:600;">{label}</span>')
     st.markdown(f'<div class="breadcrumb">{"".join(parts)}</div>', unsafe_allow_html=True)
@@ -527,188 +351,124 @@ class MediaMetadata:
     @classmethod
     def from_file(cls, file_path: Path) -> 'MediaMetadata':
         if not file_path.exists():
-            raise FileNotFoundError(f"Media file not found: {file_path}")
-        media_type = cls._detect_media_type(file_path)
+            raise FileNotFoundError(f"Not found: {file_path}")
+        mt = cls._detect_media_type(file_path)
         stats = file_path.stat()
-        if media_type == MediaType.IMAGE.value:
-            return cls._from_image(file_path, stats, media_type)
-        elif media_type == MediaType.VIDEO.value:
-            return cls._from_video(file_path, stats, media_type)
-        else:
-            raise ValueError(f"Unsupported media type for file: {file_path}")
+        if mt == MediaType.IMAGE.value:
+            return cls._from_image(file_path, stats, mt)
+        return cls._from_video(file_path, stats, mt)
 
     @staticmethod
-    def _detect_media_type(file_path: Path) -> str:
-        ext = file_path.suffix.lower()
+    def _detect_media_type(fp: Path) -> str:
+        ext = fp.suffix.lower()
         if ext in Config.SUPPORTED_VIDEO_FORMATS:
             return MediaType.VIDEO.value
-        elif ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff']:
+        if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff']:
             return MediaType.IMAGE.value
-        else:
-            raise ValueError(f"Unsupported file format: {ext}")
+        raise ValueError(f"Unsupported: {ext}")
 
     @classmethod
-    def _from_image(cls, image_path: Path, stats: os.stat_result, media_type: str) -> 'MediaMetadata':
-        with Image.open(image_path) as img:
-            return cls(
-                media_id=str(uuid.uuid4()),
-                filename=image_path.name,
-                filepath=str(image_path.relative_to(Config.DATA_DIR)),
-                file_size=stats.st_size,
-                media_type=media_type,
-                dimensions=img.size,
-                format=img.format,
-                duration=None,
-                frame_rate=None,
-                created_date=datetime.datetime.fromtimestamp(stats.st_ctime),
-                modified_date=datetime.datetime.fromtimestamp(stats.st_mtime),
-                exif_data=cls._extract_exif(img),
-                checksum=cls._calculate_checksum(image_path)
-            )
+    def _from_image(cls, ip: Path, stats, mt: str) -> 'MediaMetadata':
+        with Image.open(ip) as img:
+            return cls(media_id=str(uuid.uuid4()), filename=ip.name,
+                       filepath=str(ip.relative_to(Config.DATA_DIR)),
+                       file_size=stats.st_size, media_type=mt, dimensions=img.size,
+                       format=img.format, duration=None, frame_rate=None,
+                       created_date=datetime.datetime.fromtimestamp(stats.st_ctime),
+                       modified_date=datetime.datetime.fromtimestamp(stats.st_mtime),
+                       exif_data=cls._extract_exif(img), checksum=cls._calculate_checksum(ip))
 
     @classmethod
-    def _from_video(cls, video_path: Path, stats: os.stat_result, media_type: str) -> 'MediaMetadata':
-        dimensions = (0, 0)
-        duration = 0.0
-        frame_rate = 0.0
+    def _from_video(cls, vp: Path, stats, mt: str) -> 'MediaMetadata':
+        dims, dur, fr = (0, 0), 0.0, 0.0
         if VIDEO_SUPPORT:
             try:
-                clip = VideoFileClip(str(video_path))
-                dimensions = clip.size
-                duration = clip.duration
-                frame_rate = clip.fps
+                clip = VideoFileClip(str(vp))
+                dims, dur, fr = clip.size, clip.duration, clip.fps
                 clip.close()
             except Exception:
                 try:
-                    cap = cv2.VideoCapture(str(video_path))
-                    dimensions = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                  int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-                    fps = cap.get(cv2.CAP_PROP_FPS)
-                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    duration = frame_count / fps if fps > 0 else 0
-                    frame_rate = fps
+                    cap = cv2.VideoCapture(str(vp))
+                    dims = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                    fr = cap.get(cv2.CAP_PROP_FPS)
+                    fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    dur = fc / fr if fr > 0 else 0
                     cap.release()
-                except Exception as e2:
-                    st.warning(f"Could not extract video metadata for {video_path}: {str(e2)}")
-        return cls(
-            media_id=str(uuid.uuid4()),
-            filename=video_path.name,
-            filepath=str(video_path.relative_to(Config.DATA_DIR)),
-            file_size=stats.st_size,
-            media_type=media_type,
-            dimensions=dimensions,
-            format=video_path.suffix[1:].upper(),
-            duration=duration,
-            frame_rate=frame_rate,
-            created_date=datetime.datetime.fromtimestamp(stats.st_ctime),
-            modified_date=datetime.datetime.fromtimestamp(stats.st_mtime),
-            exif_data=None,
-            checksum=cls._calculate_checksum(video_path)
-        )
+                except Exception:
+                    pass
+        return cls(media_id=str(uuid.uuid4()), filename=vp.name,
+                   filepath=str(vp.relative_to(Config.DATA_DIR)),
+                   file_size=stats.st_size, media_type=mt, dimensions=dims,
+                   format=vp.suffix[1:].upper(), duration=dur, frame_rate=fr,
+                   created_date=datetime.datetime.fromtimestamp(stats.st_ctime),
+                   modified_date=datetime.datetime.fromtimestamp(stats.st_mtime),
+                   exif_data=None, checksum=cls._calculate_checksum(vp))
 
     @staticmethod
-    def _extract_exif(img: Image.Image) -> Optional[Dict]:
+    def _extract_exif(img):
         try:
             exif = {}
             if hasattr(img, '_getexif') and img._getexif():
-                raw_exif = img._getexif()
-                for tag_id, value in raw_exif.items():
-                    tag = ExifTags.TAGS.get(tag_id, tag_id)
-                    if not isinstance(value, (bytes, np.ndarray)):
-                        exif[tag] = str(value)
-            return exif if exif else None
+                for tid, val in img._getexif().items():
+                    tag = ExifTags.TAGS.get(tid, tid)
+                    if not isinstance(val, (bytes, np.ndarray)):
+                        exif[tag] = str(val)
+            return exif or None
         except Exception:
             return None
 
     @staticmethod
-    def _calculate_checksum(file_path: Path) -> str:
-        if not file_path.exists():
-            raise FileNotFoundError(f"File not found for checksum: {file_path}")
-        hash_md5 = hashlib.md5()
-        with open(file_path, "rb") as f:
+    def _calculate_checksum(fp: Path) -> str:
+        h = hashlib.md5()
+        with open(fp, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
+                h.update(chunk)
+        return h.hexdigest()
 
 
 @dataclass
 class AlbumEntry:
-    entry_id: str
-    media_id: str
-    person_id: str
-    caption: str
-    description: str
-    location: str
-    date_taken: Optional[datetime.datetime]
-    tags: List[str]
-    privacy_level: str
-    created_by: str
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
-
-    def to_dict(self) -> Dict:
-        data = asdict(self)
-        data['date_taken'] = self.date_taken.isoformat() if self.date_taken else None
-        data['created_at'] = self.created_at.isoformat()
-        data['updated_at'] = self.updated_at.isoformat()
-        return data
+    entry_id: str; media_id: str; person_id: str; caption: str; description: str
+    location: str; date_taken: Optional[datetime.datetime]; tags: List[str]
+    privacy_level: str; created_by: str; created_at: datetime.datetime; updated_at: datetime.datetime
+    def to_dict(self):
+        d = asdict(self)
+        d['date_taken'] = self.date_taken.isoformat() if self.date_taken else None
+        d['created_at'] = self.created_at.isoformat()
+        d['updated_at'] = self.updated_at.isoformat()
+        return d
 
 
 @dataclass
 class Comment:
-    comment_id: str
-    entry_id: str
-    user_id: str
-    username: str
-    content: str
-    created_at: datetime.datetime
-    is_edited: bool
-    parent_comment_id: Optional[str]
-
-    def to_dict(self) -> Dict:
-        data = asdict(self)
-        data['created_at'] = self.created_at.isoformat()
-        return data
+    comment_id: str; entry_id: str; user_id: str; username: str; content: str
+    created_at: datetime.datetime; is_edited: bool; parent_comment_id: Optional[str]
+    def to_dict(self):
+        d = asdict(self); d['created_at'] = self.created_at.isoformat(); return d
 
 
 @dataclass
 class Rating:
-    rating_id: str
-    entry_id: str
-    user_id: str
-    rating_value: int
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
-
-    def to_dict(self) -> Dict:
-        data = asdict(self)
-        data['created_at'] = self.created_at.isoformat()
-        data['updated_at'] = self.updated_at.isoformat()
-        return data
+    rating_id: str; entry_id: str; user_id: str; rating_value: int
+    created_at: datetime.datetime; updated_at: datetime.datetime
+    def to_dict(self):
+        d = asdict(self); d['created_at'] = self.created_at.isoformat()
+        d['updated_at'] = self.updated_at.isoformat(); return d
 
 
 @dataclass
 class PersonProfile:
-    person_id: str
-    folder_name: str
-    display_name: str
-    bio: str
-    birth_date: Optional[datetime.date]
-    relationship: str
-    contact_info: str
-    social_links: Dict[str, str]
-    profile_image: Optional[str]
-    created_at: datetime.datetime
-
-    def to_dict(self) -> Dict:
-        data = asdict(self)
-        data['birth_date'] = self.birth_date.isoformat() if self.birth_date else None
-        data['created_at'] = self.created_at.isoformat()
-        return data
+    person_id: str; folder_name: str; display_name: str; bio: str
+    birth_date: Optional[datetime.date]; relationship: str; contact_info: str
+    social_links: Dict[str, str]; profile_image: Optional[str]; created_at: datetime.datetime
+    def to_dict(self):
+        d = asdict(self)
+        d['birth_date'] = self.birth_date.isoformat() if self.birth_date else None
+        d['created_at'] = self.created_at.isoformat(); return d
 
 
 # ============================================================================
-# DATABASE MANAGEMENT
+# DATABASE
 # ============================================================================
 class DatabaseManager:
     def __init__(self, db_path: Path = None):
@@ -723,349 +483,207 @@ class DatabaseManager:
             conn.execute("PRAGMA foreign_keys = ON")
             yield conn
         except sqlite3.Error as e:
-            st.error(f"Database connection error: {str(e)}")
-            raise
+            st.error(f"DB error: {e}"); raise
         finally:
-            if conn:
-                conn.close()
+            if conn: conn.close()
 
     def _init_database(self):
         try:
             os.makedirs(self.db_path.parent, exist_ok=True)
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS media (
-                    media_id TEXT PRIMARY KEY, filename TEXT NOT NULL,
-                    filepath TEXT NOT NULL, file_size INTEGER,
-                    media_type TEXT NOT NULL, width INTEGER, height INTEGER,
-                    format TEXT, duration REAL, frame_rate REAL,
-                    created_date TIMESTAMP, modified_date TIMESTAMP,
-                    exif_data TEXT, checksum TEXT UNIQUE,
-                    thumbnail_path TEXT, video_thumbnail_path TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''')
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS people (
-                    person_id TEXT PRIMARY KEY, folder_name TEXT UNIQUE NOT NULL,
-                    display_name TEXT NOT NULL, bio TEXT, birth_date DATE,
-                    relationship TEXT, contact_info TEXT, social_links TEXT,
-                    profile_image TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''')
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS album_entries (
-                    entry_id TEXT PRIMARY KEY, media_id TEXT NOT NULL,
-                    person_id TEXT NOT NULL, caption TEXT, description TEXT,
-                    location TEXT, date_taken TIMESTAMP, tags TEXT,
-                    privacy_level TEXT DEFAULT 'public', created_by TEXT,
+                c = conn.cursor()
+                c.execute('''CREATE TABLE IF NOT EXISTS media(
+                    media_id TEXT PRIMARY KEY,filename TEXT NOT NULL,filepath TEXT NOT NULL,
+                    file_size INTEGER,media_type TEXT NOT NULL,width INTEGER,height INTEGER,
+                    format TEXT,duration REAL,frame_rate REAL,created_date TIMESTAMP,
+                    modified_date TIMESTAMP,exif_data TEXT,checksum TEXT UNIQUE,
+                    thumbnail_path TEXT,video_thumbnail_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                c.execute('''CREATE TABLE IF NOT EXISTS people(
+                    person_id TEXT PRIMARY KEY,folder_name TEXT UNIQUE NOT NULL,
+                    display_name TEXT NOT NULL,bio TEXT,birth_date DATE,
+                    relationship TEXT,contact_info TEXT,social_links TEXT,
+                    profile_image TEXT,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                c.execute('''CREATE TABLE IF NOT EXISTS album_entries(
+                    entry_id TEXT PRIMARY KEY,media_id TEXT NOT NULL,person_id TEXT NOT NULL,
+                    caption TEXT,description TEXT,location TEXT,date_taken TIMESTAMP,
+                    tags TEXT,privacy_level TEXT DEFAULT 'public',created_by TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (media_id) REFERENCES media (media_id),
-                    FOREIGN KEY (person_id) REFERENCES people (person_id)
-                )''')
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS comments (
-                    comment_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL, username TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_edited BOOLEAN DEFAULT 0, parent_comment_id TEXT,
-                    FOREIGN KEY (entry_id) REFERENCES album_entries (entry_id)
-                )''')
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS ratings (
-                    rating_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    rating_value INTEGER CHECK (rating_value BETWEEN 1 AND 5),
+                    FOREIGN KEY(media_id)REFERENCES media(media_id),
+                    FOREIGN KEY(person_id)REFERENCES people(person_id))''')
+                c.execute('''CREATE TABLE IF NOT EXISTS comments(
+                    comment_id TEXT PRIMARY KEY,entry_id TEXT NOT NULL,user_id TEXT NOT NULL,
+                    username TEXT NOT NULL,content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,is_edited BOOLEAN DEFAULT 0,
+                    parent_comment_id TEXT,FOREIGN KEY(entry_id)REFERENCES album_entries(entry_id))''')
+                c.execute('''CREATE TABLE IF NOT EXISTS ratings(
+                    rating_id TEXT PRIMARY KEY,entry_id TEXT NOT NULL,user_id TEXT NOT NULL,
+                    rating_value INTEGER CHECK(rating_value BETWEEN 1 AND 5),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(entry_id, user_id),
-                    FOREIGN KEY (entry_id) REFERENCES album_entries (entry_id)
-                )''')
-                cursor.execute('''
-                CREATE TABLE IF NOT EXISTS user_favorites (
-                    user_id TEXT, entry_id TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, entry_id),
-                    FOREIGN KEY (entry_id) REFERENCES album_entries (entry_id)
-                )''')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_album_entries_media ON album_entries(media_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_album_entries_person ON album_entries(person_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_album_entries_created ON album_entries(created_at)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_comments_entry ON comments(entry_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_ratings_entry ON ratings(entry_id)')
-                self._migrate_existing_data(conn)
+                    UNIQUE(entry_id,user_id),FOREIGN KEY(entry_id)REFERENCES album_entries(entry_id))''')
+                c.execute('''CREATE TABLE IF NOT EXISTS user_favorites(
+                    user_id TEXT,entry_id TEXT,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(user_id,entry_id),
+                    FOREIGN KEY(entry_id)REFERENCES album_entries(entry_id))''')
+                for idx in ['idx_media_type','idx_ae_media','idx_ae_person','idx_ae_created','idx_comm_entry','idx_rat_entry']:
+                    q = {'idx_media_type':'CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type)',
+                         'idx_ae_media':'CREATE INDEX IF NOT EXISTS idx_ae_media ON album_entries(media_id)',
+                         'idx_ae_person':'CREATE INDEX IF NOT EXISTS idx_ae_person ON album_entries(person_id)',
+                         'idx_ae_created':'CREATE INDEX IF NOT EXISTS idx_ae_created ON album_entries(created_at)',
+                         'idx_comm_entry':'CREATE INDEX IF NOT EXISTS idx_comm_entry ON comments(entry_id)',
+                         'idx_rat_entry':'CREATE INDEX IF NOT EXISTS idx_rat_entry ON ratings(entry_id)'}[idx]
+                    c.execute(q)
+                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='images'")
+                if c.fetchone():
+                    c.execute("SELECT COUNT(*) FROM media")
+                    if c.fetchone()[0] == 0:
+                        c.execute('''INSERT INTO media(media_id,filename,filepath,file_size,media_type,
+                            width,height,format,duration,frame_rate,created_date,modified_date,
+                            exif_data,checksum,thumbnail_path)
+                            SELECT image_id,filename,filepath,file_size,'image',width,height,format,
+                            NULL,NULL,created_date,modified_date,exif_data,checksum,thumbnail_path FROM images''')
+                        c.execute("DROP TABLE images")
                 conn.commit()
         except sqlite3.Error as e:
-            st.error(f"Database initialization error: {str(e)}")
-            raise
+            st.error(f"DB init error: {e}"); raise
 
-    def _migrate_existing_data(self, conn):
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='images'")
-        if cursor.fetchone():
-            cursor.execute("SELECT COUNT(*) FROM media")
-            if cursor.fetchone()[0] == 0:
-                cursor.execute('''
-                INSERT INTO media (media_id, filename, filepath, file_size, media_type,
-                                  width, height, format, duration, frame_rate,
-                                  created_date, modified_date, exif_data, checksum, thumbnail_path)
-                SELECT image_id, filename, filepath, file_size, 'image',
-                       width, height, format, NULL, NULL,
-                       created_date, modified_date, exif_data, checksum, thumbnail_path
-                FROM images
-                ''')
-                cursor.execute("DROP TABLE images")
+    def add_media(self, meta: MediaMetadata, tp: str = None, vtp: str = None):
+        with self.get_connection() as conn:
+            conn.execute('''INSERT OR REPLACE INTO media(media_id,filename,filepath,file_size,
+                media_type,width,height,format,duration,frame_rate,created_date,modified_date,
+                exif_data,checksum,thumbnail_path,video_thumbnail_path)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (meta.media_id, meta.filename, meta.filepath, meta.file_size, meta.media_type,
+                 meta.dimensions[0], meta.dimensions[1], meta.format, meta.duration, meta.frame_rate,
+                 meta.created_date, meta.modified_date,
+                 json.dumps(meta.exif_data) if meta.exif_data else None,
+                 meta.checksum, tp, vtp))
+            conn.commit()
 
-    def add_media(self, metadata: MediaMetadata, thumbnail_path: str = None, video_thumbnail_path: str = None):
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT OR REPLACE INTO media
-                (media_id, filename, filepath, file_size, media_type, width, height, format,
-                duration, frame_rate, created_date, modified_date, exif_data, checksum,
-                thumbnail_path, video_thumbnail_path)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ''', (
-                    metadata.media_id, metadata.filename, metadata.filepath,
-                    metadata.file_size, metadata.media_type,
-                    metadata.dimensions[0], metadata.dimensions[1], metadata.format,
-                    metadata.duration, metadata.frame_rate,
-                    metadata.created_date, metadata.modified_date,
-                    json.dumps(metadata.exif_data) if metadata.exif_data else None,
-                    metadata.checksum, thumbnail_path, video_thumbnail_path
-                ))
-                conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Error adding media: {str(e)}")
-            raise
+    def get_media(self, mid: str) -> Optional[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            r = conn.execute('SELECT * FROM media WHERE media_id=?', (mid,)).fetchone()
+            return dict(r) if r else None
 
-    def get_media(self, media_id: str) -> Optional[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM media WHERE media_id = ?', (media_id,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving media: {str(e)}")
-            return None
+    def get_media_by_type(self, mt: str, limit: int = 100) -> List[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute(
+                'SELECT * FROM media WHERE media_type=? ORDER BY created_date DESC LIMIT ?', (mt, limit)).fetchall()]
 
-    def get_media_by_type(self, media_type: str, limit: int = 100) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM media WHERE media_type = ? ORDER BY created_date DESC LIMIT ?',
-                               (media_type, limit))
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving {media_type}s: {str(e)}")
-            return []
-
-    def add_person(self, person: PersonProfile):
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT OR REPLACE INTO people
-                (person_id, folder_name, display_name, bio, birth_date,
-                relationship, contact_info, social_links, profile_image)
-                VALUES (?,?,?,?,?,?,?,?,?)
-                ''', (
-                    person.person_id, person.folder_name, person.display_name,
-                    person.bio,
-                    person.birth_date.isoformat() if person.birth_date else None,
-                    person.relationship, person.contact_info,
-                    json.dumps(person.social_links), person.profile_image
-                ))
-                conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Error adding person: {str(e)}")
-            raise
+    def add_person(self, p: PersonProfile):
+        with self.get_connection() as conn:
+            conn.execute('''INSERT OR REPLACE INTO people(person_id,folder_name,display_name,bio,
+                birth_date,relationship,contact_info,social_links,profile_image)
+                VALUES(?,?,?,?,?,?,?,?,?)''',
+                (p.person_id, p.folder_name, p.display_name, p.bio,
+                 p.birth_date.isoformat() if p.birth_date else None,
+                 p.relationship, p.contact_info, json.dumps(p.social_links), p.profile_image))
+            conn.commit()
 
     def get_all_people(self) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM people ORDER BY display_name')
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving people: {str(e)}")
-            return []
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute('SELECT * FROM people ORDER BY display_name').fetchall()]
 
-    def get_person_by_folder(self, folder_name: str) -> Optional[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM people WHERE folder_name = ?', (folder_name,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving person: {str(e)}")
-            return None
+    def get_person_by_folder(self, fn: str) -> Optional[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            r = conn.execute('SELECT * FROM people WHERE folder_name=?', (fn,)).fetchone()
+            return dict(r) if r else None
 
-    def add_album_entry(self, entry: AlbumEntry):
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT OR REPLACE INTO album_entries
-                (entry_id, media_id, person_id, caption, description, location,
-                date_taken, tags, privacy_level, created_by)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-                ''', (
-                    entry.entry_id, entry.media_id, entry.person_id,
-                    entry.caption, entry.description, entry.location,
-                    entry.date_taken,
-                    ','.join(entry.tags) if entry.tags else None,
-                    entry.privacy_level, entry.created_by
-                ))
-                conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Error adding album entry: {str(e)}")
-            raise
+    def add_album_entry(self, e: AlbumEntry):
+        with self.get_connection() as conn:
+            conn.execute('''INSERT OR REPLACE INTO album_entries(entry_id,media_id,person_id,
+                caption,description,location,date_taken,tags,privacy_level,created_by)
+                VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                (e.entry_id, e.media_id, e.person_id, e.caption, e.description, e.location,
+                 e.date_taken, ','.join(e.tags) if e.tags else None, e.privacy_level, e.created_by))
+            conn.commit()
 
-    def add_comment(self, comment: Comment):
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT INTO comments (comment_id, entry_id, user_id, username, content, parent_comment_id)
-                VALUES (?,?,?,?,?,?)
-                ''', (comment.comment_id, comment.entry_id, comment.user_id,
-                      comment.username, comment.content, comment.parent_comment_id))
-                conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Error adding comment: {str(e)}")
-            raise
+    def add_comment(self, cm: Comment):
+        with self.get_connection() as conn:
+            conn.execute('''INSERT INTO comments(comment_id,entry_id,user_id,username,content,parent_comment_id)
+                VALUES(?,?,?,?,?,?)''',
+                (cm.comment_id, cm.entry_id, cm.user_id, cm.username, cm.content, cm.parent_comment_id))
+            conn.commit()
 
-    def add_rating(self, rating: Rating):
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                INSERT OR REPLACE INTO ratings (rating_id, entry_id, user_id, rating_value)
-                VALUES (?,?,?,?)
-                ''', (rating.rating_id, rating.entry_id, rating.user_id, rating.rating_value))
-                conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Error adding rating: {str(e)}")
-            raise
+    def add_rating(self, r: Rating):
+        with self.get_connection() as conn:
+            conn.execute('''INSERT OR REPLACE INTO ratings(rating_id,entry_id,user_id,rating_value)
+                VALUES(?,?,?,?)''', (r.rating_id, r.entry_id, r.user_id, r.rating_value))
+            conn.commit()
 
-    def get_entry_comments(self, entry_id: str) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM comments WHERE entry_id = ? ORDER BY created_at DESC',
-                               (entry_id,))
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving comments: {str(e)}")
-            return []
+    def get_entry_comments(self, eid: str) -> List[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute(
+                'SELECT * FROM comments WHERE entry_id=? ORDER BY created_at DESC', (eid,)).fetchall()]
 
-    def get_entry_ratings(self, entry_id: str) -> Tuple[float, int]:
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT AVG(rating_value), COUNT(*) FROM ratings WHERE entry_id = ?',
-                               (entry_id,))
-                result = cursor.fetchone()
-                return (float(result[0]) if result and result[0] is not None else 0.0,
-                        result[1] if result else 0)
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving ratings: {str(e)}")
-            return (0.0, 0)
+    def get_entry_ratings(self, eid: str) -> Tuple[float, int]:
+        with self.get_connection() as conn:
+            r = conn.execute('SELECT AVG(rating_value),COUNT(*) FROM ratings WHERE entry_id=?', (eid,)).fetchone()
+            return (float(r[0]) if r and r[0] is not None else 0.0, r[1] if r else 0)
 
-    def search_entries(self, query: str, person_id: str = None, media_type: str = None) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                search_pattern = f'%{query}%'
-                conditions, params = [], []
-                if person_id:
-                    conditions.append("ae.person_id = ?")
-                    params.append(person_id)
-                if media_type and media_type != 'all':
-                    conditions.append("m.media_type = ?")
-                    params.append(media_type)
-                conditions.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
-                params.extend([search_pattern, search_pattern, search_pattern])
-                where_clause = " AND ".join(conditions) if conditions else "1=1"
-                cursor.execute(f'''
-                SELECT ae.*, p.display_name, m.filename, m.media_type,
-                       m.thumbnail_path, m.video_thumbnail_path
-                FROM album_entries ae
-                JOIN people p ON ae.person_id = p.person_id
-                JOIN media m ON ae.media_id = m.media_id
-                WHERE {where_clause} ORDER BY ae.created_at DESC
-                ''', params)
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            st.error(f"Error searching: {str(e)}")
-            return []
+    def search_entries(self, q: str, pid: str = None, mt: str = None) -> List[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            sp = f'%{q}%'
+            conds, params = [], []
+            if pid: conds.append("ae.person_id=?"); params.append(pid)
+            if mt and mt != 'all': conds.append("m.media_type=?"); params.append(mt)
+            conds.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
+            params.extend([sp, sp, sp])
+            w = " AND ".join(conds)
+            return [dict(r) for r in conn.execute(f'''SELECT ae.*,p.display_name,m.filename,m.media_type,
+                m.thumbnail_path,m.video_thumbnail_path FROM album_entries ae
+                JOIN people p ON ae.person_id=p.person_id JOIN media m ON ae.media_id=m.media_id
+                WHERE {w} ORDER BY ae.created_at DESC''', params).fetchall()]
 
-    def get_entry_details(self, entry_id: str) -> Optional[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('''
-                SELECT ae.entry_id, ae.media_id, ae.person_id, ae.caption,
-                       ae.description, ae.location, ae.date_taken, ae.tags,
-                       ae.privacy_level, ae.created_by, ae.created_at, ae.updated_at,
-                       p.display_name, p.folder_name,
-                       m.filename, m.filepath, m.media_type, m.file_size,
-                       m.format, m.duration, m.frame_rate, m.width, m.height,
-                       m.created_date, m.exif_data, m.thumbnail_path, m.video_thumbnail_path,
-                       (SELECT COUNT(*) FROM comments c WHERE c.entry_id = ae.entry_id) as comment_count,
-                       (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id = ae.entry_id) as avg_rating,
-                       (SELECT COUNT(*) FROM ratings r WHERE r.entry_id = ae.entry_id) as rating_count
-                FROM album_entries ae
-                JOIN people p ON ae.person_id = p.person_id
-                JOIN media m ON ae.media_id = m.media_id
-                WHERE ae.entry_id = ?
-                ''', (entry_id,))
-                row = cursor.fetchone()
-                if row:
-                    result = dict(row)
-                    if result.get('exif_data'):
-                        try:
-                            result['exif_data'] = json.loads(result['exif_data'])
-                        except Exception:
-                            result['exif_data'] = {}
-                    result['tags'] = ([t.strip() for t in result['tags'].split(',') if t.strip()]
-                                      if result.get('tags') else [])
-                    return result
-                return None
-        except sqlite3.Error as e:
-            st.error(f"Database error: {str(e)}")
+    def get_entry_details(self, eid: str) -> Optional[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute('''SELECT ae.*,p.display_name,p.folder_name,m.filename,m.filepath,
+                m.media_type,m.file_size,m.format,m.duration,m.frame_rate,m.width,m.height,
+                m.created_date,m.exif_data,m.thumbnail_path,m.video_thumbnail_path,
+                (SELECT COUNT(*)FROM comments c WHERE c.entry_id=ae.entry_id)as comment_count,
+                (SELECT AVG(rating_value)FROM ratings r WHERE r.entry_id=ae.entry_id)as avg_rating,
+                (SELECT COUNT(*)FROM ratings r2 WHERE r2.entry_id=ae.entry_id)as rating_count
+                FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
+                JOIN media m ON ae.media_id=m.media_id WHERE ae.entry_id=?''', (eid,)).fetchone()
+            if row:
+                res = dict(row)
+                if res.get('exif_data'):
+                    try: res['exif_data'] = json.loads(res['exif_data'])
+                    except: res['exif_data'] = {}
+                res['tags'] = [t.strip() for t in res['tags'].split(',') if t.strip()] if res.get('tags') else []
+                return res
             return None
 
     def get_recent_entries(self, limit: int = 10) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute('''
-                SELECT ae.*, p.display_name, m.filename, m.media_type,
-                       m.thumbnail_path, m.video_thumbnail_path
-                FROM album_entries ae
-                JOIN people p ON ae.person_id = p.person_id
-                JOIN media m ON ae.media_id = m.media_id
-                ORDER BY ae.created_at DESC LIMIT ?
-                ''', (limit,))
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving recent entries: {str(e)}")
-            return []
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute('''SELECT ae.*,p.display_name,m.filename,m.media_type,
+                m.thumbnail_path,m.video_thumbnail_path FROM album_entries ae
+                JOIN people p ON ae.person_id=p.person_id JOIN media m ON ae.media_id=m.media_id
+                ORDER BY ae.created_at DESC LIMIT ?''', (limit,)).fetchall()]
+
+    def get_all_entries_with_details(self, person_id: str = None, media_filter: str = 'all') -> List[Dict]:
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            conds, params = [], []
+            if person_id: conds.append("ae.person_id=?"); params.append(person_id)
+            if media_filter != 'all': conds.append("m.media_type=?"); params.append(media_filter)
+            w = " AND ".join(conds) if conds else "1=1"
+            return [dict(r) for r in conn.execute(f'''SELECT ae.*,p.display_name,p.folder_name,
+                m.filename,m.filepath,m.media_type,m.file_size,m.format,m.duration,m.width,m.height,
+                m.thumbnail_path,m.video_thumbnail_path
+                FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
+                JOIN media m ON ae.media_id=m.media_id WHERE {w}
+                ORDER BY ae.created_at DESC''', params).fetchall()]
 
 
 # ============================================================================
@@ -1073,108 +691,105 @@ class DatabaseManager:
 # ============================================================================
 class MediaProcessor:
     @staticmethod
-    def create_thumbnail(media_path: Path, thumbnail_dir: Path = None) -> Optional[Path]:
-        if not media_path.exists():
-            return None
-        ext = media_path.suffix.lower()
-        if ext in Config.SUPPORTED_VIDEO_FORMATS:
-            return MediaProcessor._create_video_thumbnail(media_path, thumbnail_dir)
-        return MediaProcessor._create_image_thumbnail(media_path, thumbnail_dir)
+    def create_thumbnail(mp: Path, td: Path = None) -> Optional[Path]:
+        if not mp.exists(): return None
+        if mp.suffix.lower() in Config.SUPPORTED_VIDEO_FORMATS:
+            return MediaProcessor._video_thumb(mp, td)
+        return MediaProcessor._img_thumb(mp, td)
 
     @staticmethod
-    def _create_image_thumbnail(image_path: Path, thumbnail_dir: Path = None) -> Optional[Path]:
-        thumbnail_dir = thumbnail_dir or Config.THUMBNAIL_DIR
-        os.makedirs(thumbnail_dir, exist_ok=True)
-        thumbnail_path = thumbnail_dir / f"{image_path.stem}_thumb.jpg"
+    def _img_thumb(ip: Path, td: Path = None) -> Optional[Path]:
+        td = td or Config.THUMBNAIL_DIR; os.makedirs(td, exist_ok=True)
+        tp = td / f"{ip.stem}_thumb.jpg"
         try:
-            with Image.open(image_path) as img:
+            with Image.open(ip) as img:
                 img = ImageOps.exif_transpose(img)
                 if img.mode in ('RGBA', 'LA', 'P'):
-                    background = Image.new('RGB', img.size, (255, 255, 255))
-                    if img.mode in ('RGBA', 'LA'):
-                        background.paste(img, mask=img.split()[-1])
-                    else:
-                        background.paste(img)
-                    img = background
+                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                    bg.paste(img, mask=img.split()[-1]) if img.mode in ('RGBA', 'LA') else bg.paste(img)
+                    img = bg
                 img.thumbnail(Config.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(thumbnail_path, 'JPEG', quality=85, optimize=True)
-            return thumbnail_path
+                img.save(tp, 'JPEG', quality=85, optimize=True)
+            return tp
         except Exception as e:
-            st.error(f"Error creating thumbnail for {image_path}: {str(e)}")
-            return None
+            st.error(f"Thumb error {ip}: {e}"); return None
 
     @staticmethod
-    def _create_video_thumbnail(video_path: Path, thumbnail_dir: Path = None) -> Optional[Path]:
-        if not VIDEO_SUPPORT:
-            return None
-        thumbnail_dir = thumbnail_dir or Config.VIDEO_THUMBNAIL_DIR
-        os.makedirs(thumbnail_dir, exist_ok=True)
-        thumbnail_path = thumbnail_dir / f"{video_path.stem}_thumb.jpg"
+    def _video_thumb(vp: Path, td: Path = None) -> Optional[Path]:
+        if not VIDEO_SUPPORT: return None
+        td = td or Config.VIDEO_THUMBNAIL_DIR; os.makedirs(td, exist_ok=True)
+        tp = td / f"{vp.stem}_thumb.jpg"
         try:
-            cap = cv2.VideoCapture(str(video_path))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            if total_frames > 0:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames // 2)
-            ret, frame = cap.read()
-            cap.release()
+            cap = cv2.VideoCapture(str(vp))
+            tf = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if tf > 0: cap.set(cv2.CAP_PROP_POS_FRAMES, tf // 2)
+            ret, frame = cap.read(); cap.release()
             if ret and frame is not None:
                 img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 img.thumbnail(Config.VIDEO_THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(thumbnail_path, 'JPEG', quality=85, optimize=True)
-                return thumbnail_path
-        except Exception as e:
-            st.error(f"Error creating video thumbnail for {video_path}: {str(e)}")
+                img.save(tp, 'JPEG', quality=85, optimize=True)
+                return tp
+        except Exception:
+            pass
         return None
 
     @staticmethod
-    def get_media_data_url(media_path: Path) -> str:
+    def get_media_data_url(mp: Path) -> str:
         try:
-            if not media_path.exists():
-                return ""
-            mime_type, _ = mimetypes.guess_type(str(media_path))
-            if not mime_type:
-                ext = media_path.suffix.lower()
-                mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-                            '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm'}
-                mime_type = mime_map.get(ext, 'application/octet-stream')
-            with open(media_path, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode('utf-8')
-                return f"data:{mime_type};base64,{encoded}"
-        except Exception as e:
-            st.error(f"Error encoding media {media_path}: {str(e)}")
+            if not mp.exists(): return ""
+            mt, _ = mimetypes.guess_type(str(mp))
+            if not mt:
+                mm = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                      '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm'}
+                mt = mm.get(mp.suffix.lower(), 'application/octet-stream')
+            with open(mp, "rb") as f:
+                return f"data:{mt};base64,{base64.b64encode(f.read()).decode('utf-8')}"
+        except Exception:
             return ""
 
     @staticmethod
-    def prepare_video_stream(video_path: Path, max_size_mb: int = 50) -> Optional[bytes]:
+    def get_hd_data_url(mp: Path) -> str:
         try:
-            if not video_path.exists():
+            if not mp.exists(): return ""
+            with Image.open(mp) as img:
+                img = ImageOps.exif_transpose(img)
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                    bg.paste(img, mask=img.split()[-1]) if img.mode in ('RGBA', 'LA') else bg.paste(img)
+                    img = bg
+                max_w, max_h = Config.HD_SIZE
+                if img.width > max_w or img.height > max_h:
+                    img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=95)
+                return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
+        except Exception:
+            return MediaProcessor.get_media_data_url(mp)
+
+    @staticmethod
+    def prepare_video_stream(vp: Path, max_mb: int = 50) -> Optional[bytes]:
+        try:
+            if not vp.exists(): return None
+            if vp.stat().st_size > max_mb * 1024 * 1024:
+                st.warning(f"Video too large ({vp.stat().st_size/(1024*1024):.1f}MB)")
                 return None
-            if video_path.stat().st_size > max_size_mb * 1024 * 1024:
-                st.warning(f"Video too large ({video_path.stat().st_size/(1024*1024):.1f}MB). Max {max_size_mb}MB.")
-                return None
-            with open(video_path, "rb") as f:
-                return f.read()
-        except Exception as e:
-            st.error(f"Error reading video: {str(e)}")
+            with open(vp, "rb") as f: return f.read()
+        except Exception:
             return None
 
     @staticmethod
-    def get_video_info(video_path: Path) -> Dict[str, Any]:
+    def get_video_info(vp: Path) -> Dict:
         info = {'duration': 0, 'dimensions': (0, 0), 'frame_rate': 0,
-                'file_size': video_path.stat().st_size if video_path.exists() else 0}
-        if not VIDEO_SUPPORT or not video_path.exists():
-            return info
+                'file_size': vp.stat().st_size if vp.exists() else 0}
+        if not VIDEO_SUPPORT or not vp.exists(): return info
         try:
-            clip = VideoFileClip(str(video_path))
-            info['duration'] = clip.duration
-            info['dimensions'] = clip.size
-            info['frame_rate'] = clip.fps
+            clip = VideoFileClip(str(vp))
+            info.update({'duration': clip.duration, 'dimensions': clip.size, 'frame_rate': clip.fps})
             clip.close()
         except Exception:
             try:
-                cap = cv2.VideoCapture(str(video_path))
-                info['dimensions'] = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                      int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                cap = cv2.VideoCapture(str(vp))
+                info['dimensions'] = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
                 info['frame_rate'] = cap.get(cv2.CAP_PROP_FPS)
                 fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 info['duration'] = fc / info['frame_rate'] if info['frame_rate'] > 0 else 0
@@ -1185,59 +800,39 @@ class MediaProcessor:
 
 
 # ============================================================================
-# CACHE MANAGEMENT
+# CACHE
 # ============================================================================
 class CacheManager:
     def __init__(self):
-        self._cache = {}
-        self._timestamps = {}
-        self._video_cache = {}
+        self._cache = {}; self._ts = {}; self._vc = {}
 
-    def get(self, key: str, default=None):
-        if key in self._cache:
-            if time.time() - self._timestamps[key] < Config.CACHE_TTL:
-                return self._cache[key]
-            del self._cache[key]
-            del self._timestamps[key]
+    def get(self, k, default=None):
+        if k in self._cache and time.time() - self._ts[k] < Config.CACHE_TTL:
+            return self._cache[k]
+        self._cache.pop(k, None); self._ts.pop(k, None)
         return default
 
-    def set(self, key: str, value):
-        self._cache[key] = value
-        self._timestamps[key] = time.time()
+    def set(self, k, v):
+        self._cache[k] = v; self._ts[k] = time.time()
 
-    def clear(self, key: str = None):
-        if key:
-            self._cache.pop(key, None)
-            self._timestamps.pop(key, None)
-        else:
-            self._cache.clear()
-            self._timestamps.clear()
-            self._video_cache.clear()
+    def clear(self, k=None):
+        if k: self._cache.pop(k, None); self._ts.pop(k, None)
+        else: self._cache.clear(); self._ts.clear(); self._vc.clear()
 
-    def get_or_set(self, key: str, generator_func):
-        cached = self.get(key)
-        if cached is not None:
-            return cached
+    def get_or_set(self, k, fn):
+        c = self.get(k)
+        if c is not None: return c
         try:
-            value = generator_func()
-            self.set(key, value)
-            return value
+            v = fn(); self.set(k, v); return v
         except Exception as e:
-            st.error(f"Cache generator error for {key}: {str(e)}")
-            return None
+            st.error(f"Cache error: {e}"); return None
 
-    def get_video(self, video_path: Path) -> Optional[bytes]:
-        return self._video_cache.get(f"video_{video_path}")
-
-    def set_video(self, video_path: Path, video_data: bytes):
-        key = f"video_{video_path}"
-        self._video_cache[key] = video_data
-        if len(self._video_cache) > 10:
-            oldest = next(iter(self._video_cache))
-            del self._video_cache[oldest]
-
-    def clear_video_cache(self):
-        self._video_cache.clear()
+    def get_video(self, p): return self._vc.get(f"video_{p}")
+    def set_video(self, p, d):
+        self._vc[f"video_{p}"] = d
+        if len(self._vc) > 10:
+            del self._vc[next(iter(self._vc))]
+    def clear_video_cache(self): self._vc.clear()
 
 
 # ============================================================================
@@ -1245,53 +840,35 @@ class CacheManager:
 # ============================================================================
 class UIComponents:
     @staticmethod
-    def rating_stars(rating: float, max_rating: int = 5, size: int = 20) -> str:
-        if rating is None or rating <= 0:
-            rating = 0
-        stars_html = []
-        full_stars = int(rating)
-        has_half = rating - full_stars >= 0.5
-        for i in range(max_rating):
-            if i < full_stars:
-                stars_html.append('⭐')
-            elif i == full_stars and has_half:
-                stars_html.append('⭐')
-            else:
-                stars_html.append('☆')
+    def rating_stars(rating, max_r=5, size=20):
+        if not rating or rating <= 0: rating = 0
+        full = int(rating); half = rating - full >= 0.5
+        stars = []
+        for i in range(max_r):
+            if i < full: stars.append('⭐')
+            elif i == full and half: stars.append('⭐')
+            else: stars.append('☆')
         return (f'<div style="color:#FFD700;font-size:{size}px;letter-spacing:1px;display:inline-block;">'
-                f'{"".join(stars_html)}'
-                f'<span style="color:#666;font-size:14px;margin-left:8px;vertical-align:middle;">'
-                f'{rating:.1f}/{max_rating}</span></div>')
+                f'{"".join(stars)}<span style="color:#666;font-size:14px;margin-left:8px;">'
+                f'{rating:.1f}/{max_r}</span></div>')
 
     @staticmethod
-    def tag_badges(tags: List[str], max_display: int = 5) -> str:
-        if not tags:
-            return ""
-        displayed = tags[:max_display]
-        extra = len(tags) - max_display if len(tags) > max_display else 0
-        badges = []
-        for tag in displayed:
-            badges.append(
-                f'<span style="background:linear-gradient(135deg,#667eea,#764ba2);'
-                f'color:#fff;padding:4px 12px;border-radius:20px;font-size:12px;'
-                f'margin:2px;display:inline-block;box-shadow:0 2px 4px rgba(0,0,0,.1);'
-                f'text-transform:capitalize;">{tag.replace("-"," ")}</span>')
-        html = ' '.join(badges)
+    def tag_badges(tags, max_d=5):
+        if not tags: return ""
+        shown = tags[:max_d]; extra = len(tags) - max_d if len(tags) > max_d else 0
+        b = [f'<span style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:4px 12px;'
+             f'border-radius:20px;font-size:12px;margin:2px;display:inline-block;box-shadow:0 2px 4px rgba(0,0,0,.1);'
+             f'text-transform:capitalize;">{t.replace("-"," ")}</span>' for t in shown]
+        h = ' '.join(b)
         if extra > 0:
-            html += (f'<span style="background:#f0f0f0;color:#666;padding:4px 8px;'
-                     f'border-radius:20px;font-size:12px;margin:2px;display:inline-block;">'
-                     f'+{extra} more</span>')
-        return html
+            h += f'<span style="background:#f0f0f0;color:#666;padding:4px 8px;border-radius:20px;font-size:12px;margin:2px;display:inline-block;">+{extra}</span>'
+        return h
 
     @staticmethod
-    def media_type_badge(media_type: str) -> str:
-        if media_type == MediaType.VIDEO.value:
-            return ('<span style="background:linear-gradient(135deg,#FF416C,#FF4B2B);'
-                    'color:#fff;padding:2px 8px;border-radius:12px;font-size:10px;'
-                    'font-weight:700;margin-left:8px;display:inline-block;">🎬 VIDEO</span>')
-        return ('<span style="background:linear-gradient(135deg,#667eea,#764ba2);'
-                'color:#fff;padding:2px 8px;border-radius:12px;font-size:10px;'
-                'font-weight:700;margin-left:8px;display:inline-block;">📸 IMAGE</span>')
+    def media_type_badge(mt):
+        if mt == MediaType.VIDEO.value:
+            return '<span style="background:linear-gradient(135deg,#FF416C,#FF4B2B);color:#fff;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-left:8px;display:inline-block;">🎬 VIDEO</span>'
+        return '<span style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-left:8px;display:inline-block;">📸 IMAGE</span>'
 
 
 # ============================================================================
@@ -1301,519 +878,412 @@ class AlbumManager:
     def __init__(self):
         self.db = DatabaseManager()
         self.cache = CacheManager()
-        self.media_processor = MediaProcessor()
-        self._init_session_state()
+        self.mp = MediaProcessor()
+        self._init_ss()
 
-    def _init_session_state(self):
+    def _init_ss(self):
         if 'initialized' not in st.session_state:
             st.session_state.update({
-                'initialized': True,
-                'current_page': 'dashboard',
-                'selected_person': None,
-                'selected_media': None,
-                'search_query': '',
-                'view_mode': 'grid',
-                'sort_by': 'date',
-                'sort_order': 'desc',
-                'media_filter': 'all',
-                'selected_tags': [],
-                'user_id': str(uuid.uuid4()),
-                'username': 'Guest',
-                'user_role': UserRoles.VIEWER.value,
-                'favorites': set(),
-                'recently_viewed': [],
-                'toc_page': 1,
-                'gallery_page': 1,
-                'show_directory_info': True,
-                'video_autoplay': False,
+                'initialized': True, 'current_page': 'dashboard',
+                'selected_person': None, 'selected_media': None,
+                'search_query': '', 'view_mode': 'grid', 'sort_by': 'date',
+                'sort_order': 'desc', 'media_filter': 'all', 'selected_tags': [],
+                'user_id': str(uuid.uuid4()), 'username': 'Guest',
+                'user_role': UserRoles.VIEWER.value, 'favorites': set(),
+                'recently_viewed': [], 'toc_page': 1, 'gallery_page': 1,
+                'show_directory_info': True, 'video_autoplay': False,
                 'frame_style': Config.DEFAULT_FRAME_STYLE,
-                'slideshow_active': False,
-                'slideshow_index': 0,
+                'slider_entries': [], 'slider_index': 0,
+                'slider_page': 'gallery',
                 'fullscreen_media': None,
+                'dir_expanded': {},
             })
 
-    def scan_directory(self, data_dir: Path = None) -> Dict:
-        data_dir = data_dir or Config.DATA_DIR
-        results = {'total_media': 0, 'new_media': 0, 'updated_media': 0,
-                   'images_found': 0, 'videos_found': 0, 'people_found': 0, 'errors': []}
+    def scan_directory(self, dd: Path = None) -> Dict:
+        dd = dd or Config.DATA_DIR
+        res = {'total_media': 0, 'new_media': 0, 'updated_media': 0,
+               'images_found': 0, 'videos_found': 0, 'people_found': 0, 'errors': []}
         try:
-            if not data_dir.exists():
-                data_dir.mkdir(parents=True)
-                return results
-
-            person_dirs = [d for d in data_dir.iterdir()
-                           if d.is_dir() and not d.name.startswith('.')
-                           and d.name not in ['thumbnails', 'video_thumbnails', 'video_cache',
-                                              'metadata', 'database', 'exports']]
-
-            if not person_dirs:
+            if not dd.exists(): dd.mkdir(parents=True); return res
+            skip = {'thumbnails', 'video_thumbnails', 'video_cache', 'metadata', 'database', 'exports'}
+            pdirs = [d for d in dd.iterdir() if d.is_dir() and not d.name.startswith('.') and d.name not in skip]
+            if not pdirs:
                 Config.create_sample_structure()
-                person_dirs = [d for d in data_dir.iterdir()
-                               if d.is_dir() and not d.name.startswith('.')
-                               and d.name not in ['thumbnails', 'video_thumbnails', 'video_cache',
-                                                  'metadata', 'database', 'exports']]
-
-            results['people_found'] = len(person_dirs)
-            progress_bar = st.progress(0)
-            total_files = 0
-            processed = 0
-
-            for pd_dir in person_dirs:
-                total_files += sum(1 for f in pd_dir.iterdir()
-                                   if f.is_file() and f.suffix.lower() in Config.ALLOWED_EXTENSIONS)
-
-            if total_files == 0:
-                st.info("No media files found in any folders.")
-                progress_bar.empty()
-                return results
-
-            for person_dir in person_dirs:
-                if '-' in person_dir.name:
-                    display_name = ' '.join(p.capitalize() for p in person_dir.name.split('-'))
-                elif '_' in person_dir.name:
-                    display_name = ' '.join(p.capitalize() for p in person_dir.name.split('_'))
-                else:
-                    display_name = ' '.join(w.capitalize() for w in person_dir.name.split())
-
-                existing_person = self.db.get_person_by_folder(person_dir.name)
-                if not existing_person:
-                    pp = PersonProfile(person_id=str(uuid.uuid4()), folder_name=person_dir.name,
-                                       display_name=display_name, bio=f"Photos/Videos of {display_name}",
-                                       birth_date=None, relationship="Family/Friend", contact_info="",
-                                       social_links={}, profile_image=None,
+                pdirs = [d for d in dd.iterdir() if d.is_dir() and not d.name.startswith('.') and d.name not in skip]
+            res['people_found'] = len(pdirs)
+            pb = st.progress(0)
+            total = sum(1 for pd in pdirs for f in pd.iterdir() if f.is_file() and f.suffix.lower() in Config.ALLOWED_EXTENSIONS)
+            proc = 0
+            for pdir in pdirs:
+                dn = ' '.join(p.capitalize() for p in pdir.name.replace('-', ' ').replace('_', ' ').split())
+                ep = self.db.get_person_by_folder(pdir.name)
+                if not ep:
+                    pp = PersonProfile(person_id=str(uuid.uuid4()), folder_name=pdir.name, display_name=dn,
+                                       bio=f"Photos of {dn}", birth_date=None, relationship="Other",
+                                       contact_info="", social_links={}, profile_image=None,
                                        created_at=datetime.datetime.now())
-                    self.db.add_person(pp)
-                    person_id = pp.person_id
+                    self.db.add_person(pp); pid = pp.person_id
                 else:
-                    person_id = existing_person['person_id']
-
-                media_files = [f for f in person_dir.iterdir()
-                               if f.is_file() and f.suffix.lower() in Config.ALLOWED_EXTENSIONS]
-
-                for media_path in media_files:
+                    pid = ep['person_id']
+                for mf in pdir.iterdir():
+                    if not mf.is_file() or mf.suffix.lower() not in Config.ALLOWED_EXTENSIONS: continue
                     try:
-                        processed += 1
-                        progress_bar.progress(processed / max(total_files, 1))
-                        checksum = MediaMetadata._calculate_checksum(media_path)
+                        proc += 1; pb.progress(proc / max(total, 1))
+                        cs = MediaMetadata._calculate_checksum(mf)
                         with sqlite3.connect(self.db.db_path) as conn:
-                            cur = conn.cursor()
-                            cur.execute('SELECT media_id FROM media WHERE checksum = ?', (checksum,))
-                            if cur.fetchone():
-                                results['updated_media'] += 1
-                                continue
-                        metadata = MediaMetadata.from_file(media_path)
-                        thumb = vid_thumb = None
-                        if metadata.media_type == MediaType.IMAGE.value:
-                            thumb = self.media_processor.create_thumbnail(media_path)
-                            results['images_found'] += 1
-                        elif metadata.media_type == MediaType.VIDEO.value:
-                            vid_thumb = self.media_processor.create_thumbnail(media_path)
-                            results['videos_found'] += 1
-                        self.db.add_media(metadata,
-                                          str(thumb) if thumb else None,
-                                          str(vid_thumb) if vid_thumb else None)
-                        entry = AlbumEntry(
-                            entry_id=str(uuid.uuid4()), media_id=metadata.media_id,
-                            person_id=person_id,
-                            caption=media_path.stem.replace('_', ' ').title(),
-                            description=f"Media of {display_name}",
-                            location="", date_taken=metadata.created_date,
-                            tags=[display_name.lower().replace(' ', '-'), metadata.media_type, 'memory'],
-                            privacy_level='public', created_by='system',
-                            created_at=datetime.datetime.now(), updated_at=datetime.datetime.now())
-                        self.db.add_album_entry(entry)
-                        results['new_media'] += 1
-                        results['total_media'] += 1
+                            if conn.execute('SELECT 1 FROM media WHERE checksum=?', (cs,)).fetchone():
+                                res['updated_media'] += 1; continue
+                        meta = MediaMetadata.from_file(mf)
+                        th = vth = None
+                        if meta.media_type == MediaType.IMAGE.value:
+                            th = self.mp.create_thumbnail(mf); res['images_found'] += 1
+                        else:
+                            vth = self.mp.create_thumbnail(mf); res['videos_found'] += 1
+                        self.db.add_media(meta, str(th) if th else None, str(vth) if vth else None)
+                        ae = AlbumEntry(entry_id=str(uuid.uuid4()), media_id=meta.media_id, person_id=pid,
+                                        caption=mf.stem.replace('_', ' ').title(),
+                                        description=f"Media of {dn}", location="",
+                                        date_taken=meta.created_date,
+                                        tags=[dn.lower().replace(' ', '-'), meta.media_type, 'memory'],
+                                        privacy_level='public', created_by='system',
+                                        created_at=datetime.datetime.now(), updated_at=datetime.datetime.now())
+                        self.db.add_album_entry(ae)
+                        res['new_media'] += 1; res['total_media'] += 1
                     except Exception as e:
-                        results['errors'].append(f"Error processing {media_path}: {str(e)}")
-
-            progress_bar.empty()
-            self.cache.clear()
-            return results
+                        res['errors'].append(str(e))
+            pb.empty(); self.cache.clear(); return res
         except Exception as e:
-            st.error(f"Critical error during scan: {str(e)}")
-            results['errors'].append(f"Critical: {str(e)}")
-            return results
+            res['errors'].append(str(e)); return res
 
-    def get_person_stats(self, person_id: str) -> Dict:
-        cache_key = f"person_stats_{person_id}"
-
+    def get_person_stats(self, pid):
         def gen():
             try:
                 with sqlite3.connect(self.db.db_path) as conn:
                     c = conn.cursor()
-                    c.execute('SELECT COUNT(*) FROM album_entries WHERE person_id=?', (person_id,))
-                    mc = c.fetchone()[0]
-                    c.execute('''SELECT m.media_type, COUNT(*) FROM album_entries ae
-                                 JOIN media m ON ae.media_id=m.media_id
-                                 WHERE ae.person_id=? GROUP BY m.media_type''', (person_id,))
+                    mc = c.execute('SELECT COUNT(*)FROM album_entries WHERE person_id=?', (pid,)).fetchone()[0]
+                    c.execute('''SELECT m.media_type,COUNT(*)FROM album_entries ae JOIN media m ON ae.media_id=m.media_id
+                        WHERE ae.person_id=? GROUP BY m.media_type''', (pid,))
                     ic = vc = 0
-                    for row in c.fetchall():
-                        if row[0] == 'image': ic = row[1]
-                        elif row[0] == 'video': vc = row[1]
-                    c.execute('''SELECT COUNT(DISTINCT c.comment_id) FROM comments c
-                                 JOIN album_entries ae ON c.entry_id=ae.entry_id
-                                 WHERE ae.person_id=?''', (person_id,))
-                    cc = c.fetchone()[0]
-                    c.execute('''SELECT AVG(r.rating_value) FROM ratings r
-                                 JOIN album_entries ae ON r.entry_id=ae.entry_id
-                                 WHERE ae.person_id=?''', (person_id,))
-                    ar = c.fetchone()[0] or 0.0
-                    c.execute('SELECT MAX(created_at) FROM album_entries WHERE person_id=?', (person_id,))
-                    la = c.fetchone()[0]
+                    for r in c.fetchall():
+                        if r[0] == 'image': ic = r[1]
+                        elif r[0] == 'video': vc = r[1]
+                    cc = c.execute('''SELECT COUNT(DISTINCT c.comment_id)FROM comments c
+                        JOIN album_entries ae ON c.entry_id=ae.entry_id WHERE ae.person_id=?''', (pid,)).fetchone()[0]
+                    ar = c.execute('''SELECT AVG(r.rating_value)FROM ratings r
+                        JOIN album_entries ae ON r.entry_id=ae.entry_id WHERE ae.person_id=?''', (pid,)).fetchone()[0] or 0.0
+                    la = c.execute('SELECT MAX(created_at)FROM album_entries WHERE person_id=?', (pid,)).fetchone()[0]
                     return {'media_count': mc, 'image_count': ic, 'video_count': vc,
                             'comment_count': cc, 'avg_rating': float(ar), 'last_activity': la}
-            except sqlite3.Error as e:
-                st.error(f"Stats error: {str(e)}")
+            except Exception:
                 return {'media_count': 0, 'image_count': 0, 'video_count': 0,
                         'comment_count': 0, 'avg_rating': 0.0, 'last_activity': None}
+        return self.cache.get_or_set(f"pstats_{pid}", gen)
 
-        return self.cache.get_or_set(cache_key, gen)
-
-    def add_to_favorites(self, entry_id: str):
+    def add_to_favorites(self, eid):
         uid = st.session_state['user_id']
-        try:
-            with sqlite3.connect(self.db.db_path) as conn:
-                conn.execute('INSERT OR IGNORE INTO user_favorites (user_id,entry_id) VALUES (?,?)',
-                             (uid, entry_id))
-                conn.commit()
-            st.session_state.favorites.add(entry_id)
-        except sqlite3.Error as e:
-            st.error(f"Error adding favorite: {str(e)}")
+        with sqlite3.connect(self.db.db_path) as conn:
+            conn.execute('INSERT OR IGNORE INTO user_favorites(user_id,entry_id)VALUES(?,?)', (uid, eid))
+            conn.commit()
+        st.session_state.favorites.add(eid)
 
-    def remove_from_favorites(self, entry_id: str):
+    def remove_from_favorites(self, eid):
         uid = st.session_state['user_id']
-        try:
-            with sqlite3.connect(self.db.db_path) as conn:
-                conn.execute('DELETE FROM user_favorites WHERE user_id=? AND entry_id=?', (uid, entry_id))
-                conn.commit()
-            st.session_state.favorites.discard(entry_id)
-        except sqlite3.Error as e:
-            st.error(f"Error removing favorite: {str(e)}")
+        with sqlite3.connect(self.db.db_path) as conn:
+            conn.execute('DELETE FROM user_favorites WHERE user_id=? AND entry_id=?', (uid, eid))
+            conn.commit()
+        st.session_state.favorites.discard(eid)
 
-    def get_user_favorites(self) -> List[Dict]:
+    def get_user_favorites(self):
         uid = st.session_state['user_id']
-        try:
-            with sqlite3.connect(self.db.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute('''SELECT ae.*, p.display_name, m.filename, m.media_type,
-                             m.thumbnail_path, m.video_thumbnail_path
-                             FROM user_favorites uf
-                             JOIN album_entries ae ON uf.entry_id=ae.entry_id
-                             JOIN people p ON ae.person_id=p.person_id
-                             JOIN media m ON ae.media_id=m.media_id
-                             WHERE uf.user_id=? ORDER BY uf.created_at DESC''', (uid,))
-                return [dict(row) for row in c.fetchall()]
-        except sqlite3.Error as e:
-            st.error(f"Error retrieving favorites: {str(e)}")
-            return []
+        with sqlite3.connect(self.db.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute('''SELECT ae.*,p.display_name,m.filename,m.media_type,
+                m.thumbnail_path,m.video_thumbnail_path FROM user_favorites uf
+                JOIN album_entries ae ON uf.entry_id=ae.entry_id
+                JOIN people p ON ae.person_id=p.person_id JOIN media m ON ae.media_id=m.media_id
+                WHERE uf.user_id=? ORDER BY uf.created_at DESC''', (uid,)).fetchall()]
 
-    def add_comment_to_entry(self, entry_id: str, content: str, parent_comment_id: str = None):
-        if not content or not content.strip():
-            st.warning("Comment cannot be empty")
-            return False
-        if len(content) > Config.MAX_COMMENT_LENGTH:
-            st.warning(f"Comment too long (max {Config.MAX_COMMENT_LENGTH})")
-            return False
-        try:
-            comment = Comment(comment_id=str(uuid.uuid4()), entry_id=entry_id,
-                              user_id=st.session_state['user_id'],
-                              username=st.session_state['username'],
-                              content=content.strip(), created_at=datetime.datetime.now(),
-                              is_edited=False, parent_comment_id=parent_comment_id)
-            self.db.add_comment(comment)
-            self.cache.clear(f"comments_{entry_id}")
-            st.success("Comment added!")
-            return True
-        except Exception as e:
-            st.error(f"Error adding comment: {str(e)}")
-            return False
+    def add_comment_to_entry(self, eid, content, parent=None):
+        if not content or not content.strip(): return False
+        if len(content) > Config.MAX_COMMENT_LENGTH: return False
+        cm = Comment(comment_id=str(uuid.uuid4()), entry_id=eid,
+                     user_id=st.session_state['user_id'], username=st.session_state['username'],
+                     content=content.strip(), created_at=datetime.datetime.now(),
+                     is_edited=False, parent_comment_id=parent)
+        self.db.add_comment(cm); self.cache.clear(f"comments_{eid}")
+        return True
 
-    def add_rating_to_entry(self, entry_id: str, rating_value: int):
-        if rating_value < 1 or rating_value > 5:
-            st.warning("Rating must be 1-5")
-            return False
-        try:
-            rating = Rating(rating_id=str(uuid.uuid4()), entry_id=entry_id,
-                            user_id=st.session_state['user_id'], rating_value=rating_value,
-                            created_at=datetime.datetime.now(), updated_at=datetime.datetime.now())
-            self.db.add_rating(rating)
-            self.cache.clear(f"ratings_{entry_id}")
-            st.success(f"Rated {rating_value} ⭐!")
-            return True
-        except Exception as e:
-            st.error(f"Error adding rating: {str(e)}")
-            return False
+    def add_rating_to_entry(self, eid, val):
+        if val < 1 or val > 5: return False
+        r = Rating(rating_id=str(uuid.uuid4()), entry_id=eid, user_id=st.session_state['user_id'],
+                   rating_value=val, created_at=datetime.datetime.now(), updated_at=datetime.datetime.now())
+        self.db.add_rating(r); self.cache.clear(f"ratings_{eid}")
+        return True
 
-    def get_all_people_with_stats(self) -> List[Dict]:
+    def get_all_people_with_stats(self):
         def gen():
-            try:
-                people = self.db.get_all_people()
-                result = []
-                for person in people:
-                    stats = self.get_person_stats(person['person_id'])
-                    pw = {**person, **stats}
-                    if person.get('profile_image'):
-                        pimg = Config.DATA_DIR / person['folder_name'] / person['profile_image']
-                        if pimg.exists():
-                            pw['profile_image_data'] = self.media_processor.get_media_data_url(pimg)
-                    result.append(pw)
-                return result
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-                return []
-        return self.cache.get_or_set("all_people_with_stats", gen)
+            people = self.db.get_all_people(); result = []
+            for p in people:
+                s = self.get_person_stats(p['person_id']); pw = {**p, **s}
+                if p.get('profile_image'):
+                    pi = Config.DATA_DIR / p['folder_name'] / p['profile_image']
+                    if pi.exists(): pw['profile_image_data'] = self.mp.get_media_data_url(pi)
+                result.append(pw)
+            return result
+        return self.cache.get_or_set("all_pstats", gen)
 
-    def get_entries_by_person(self, person_id: str, page: int = 1,
-                              search_query: str = None, media_filter: str = 'all') -> Dict:
-        cache_key = f"entries_person_{person_id}_p{page}_q{search_query}_f{media_filter}"
-
+    def get_entries_by_person(self, pid, page=1, sq=None, mf='all'):
         def gen():
-            try:
-                offset = (page - 1) * Config.ITEMS_PER_PAGE
-                with sqlite3.connect(self.db.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    c = conn.cursor()
-                    conds, params = ["ae.person_id = ?"], [person_id]
-                    if search_query:
-                        sp = f'%{search_query}%'
-                        conds.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
-                        params.extend([sp, sp, sp])
-                    if media_filter != 'all':
-                        conds.append("m.media_type = ?")
-                        params.append(media_filter)
-                    where = " AND ".join(conds)
-                    params.extend([Config.ITEMS_PER_PAGE, offset])
-                    c.execute(f'''SELECT ae.*, p.display_name, m.filename, m.media_type,
-                                  m.thumbnail_path, m.video_thumbnail_path, m.duration,
-                                  (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id=ae.entry_id) as avg_rating,
-                                  (SELECT COUNT(*) FROM comments c2 WHERE c2.entry_id=ae.entry_id) as comment_count
-                                  FROM album_entries ae
-                                  JOIN people p ON ae.person_id=p.person_id
-                                  JOIN media m ON ae.media_id=m.media_id
-                                  WHERE {where} ORDER BY ae.created_at DESC LIMIT ? OFFSET ?''', params)
-                    entries = [dict(row) for row in c.fetchall()]
-                    c.execute(f'SELECT COUNT(*) FROM album_entries ae JOIN media m ON ae.media_id=m.media_id WHERE {where}',
-                              params[:-2])
-                    total = c.fetchone()[0]
-                    return {'entries': entries, 'total_count': total,
-                            'total_pages': max(1, math.ceil(total / Config.ITEMS_PER_PAGE)),
-                            'current_page': page}
-            except sqlite3.Error as e:
-                st.error(f"Error: {str(e)}")
-                return {'entries': [], 'total_count': 0, 'total_pages': 1, 'current_page': page}
+            off = (page - 1) * Config.ITEMS_PER_PAGE
+            with sqlite3.connect(self.db.db_path) as conn:
+                conn.row_factory = sqlite3.Row; c = conn.cursor()
+                conds, params = ["ae.person_id=?"], [pid]
+                if sq:
+                    sp = f'%{sq}%'; conds.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
+                    params.extend([sp, sp, sp])
+                if mf != 'all': conds.append("m.media_type=?"); params.append(mf)
+                w = " AND ".join(conds); params.extend([Config.ITEMS_PER_PAGE, off])
+                c.execute(f'''SELECT ae.*,p.display_name,m.filename,m.media_type,m.thumbnail_path,
+                    m.video_thumbnail_path,m.duration,m.filepath,
+                    (SELECT AVG(rating_value)FROM ratings r WHERE r.entry_id=ae.entry_id)as avg_rating,
+                    (SELECT COUNT(*)FROM comments c2 WHERE c2.entry_id=ae.entry_id)as comment_count
+                    FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
+                    JOIN media m ON ae.media_id=m.media_id WHERE {w}
+                    ORDER BY ae.created_at DESC LIMIT ? OFFSET ?''', params)
+                entries = [dict(r) for r in c.fetchall()]
+                c.execute(f'SELECT COUNT(*)FROM album_entries ae JOIN media m ON ae.media_id=m.media_id WHERE {w}',
+                          params[:-2])
+                total = c.fetchone()[0]
+                return {'entries': entries, 'total_count': total,
+                        'total_pages': max(1, math.ceil(total / Config.ITEMS_PER_PAGE)), 'current_page': page}
+        return self.cache.get_or_set(f"ep_{pid}_p{page}_q{sq}_f{mf}", gen)
 
-        return self.cache.get_or_set(cache_key, gen)
-
-    def get_recent_entries(self, limit: int = 10) -> List[Dict]:
+    def get_recent_entries(self, limit=10):
         return self.cache.get_or_set(f"recent_{limit}", lambda: self.db.get_recent_entries(limit))
 
-    def get_top_rated_entries(self, limit: int = 10) -> List[Dict]:
+    def get_top_rated_entries(self, limit=10):
         def gen():
-            try:
-                with sqlite3.connect(self.db.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    c = conn.cursor()
-                    c.execute('''SELECT ae.*, p.display_name, m.filename, m.media_type,
-                                 m.thumbnail_path, m.video_thumbnail_path,
-                                 (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id=ae.entry_id) as avg_rating,
-                                 (SELECT COUNT(*) FROM ratings r2 WHERE r2.entry_id=ae.entry_id) as rating_count
-                                 FROM album_entries ae
-                                 JOIN people p ON ae.person_id=p.person_id
-                                 JOIN media m ON ae.media_id=m.media_id
-                                 WHERE ae.entry_id IN (
-                                   SELECT r.entry_id FROM ratings r GROUP BY r.entry_id
-                                   HAVING AVG(r.rating_value)>=4.0 ORDER BY AVG(r.rating_value) DESC
-                                 ) ORDER BY avg_rating DESC LIMIT ?''', (limit,))
-                    return [dict(row) for row in c.fetchall()]
-            except sqlite3.Error as e:
-                st.error(f"Error: {str(e)}")
-                return []
-        return self.cache.get_or_set(f"top_rated_{limit}", gen)
+            with sqlite3.connect(self.db.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                return [dict(r) for r in conn.execute('''SELECT ae.*,p.display_name,m.filename,m.media_type,
+                    m.thumbnail_path,m.video_thumbnail_path,
+                    (SELECT AVG(rating_value)FROM ratings r WHERE r.entry_id=ae.entry_id)as avg_rating,
+                    (SELECT COUNT(*)FROM ratings r2 WHERE r2.entry_id=ae.entry_id)as rating_count
+                    FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
+                    JOIN media m ON ae.media_id=m.media_id
+                    WHERE ae.entry_id IN(SELECT r.entry_id FROM ratings r GROUP BY r.entry_id
+                        HAVING AVG(r.rating_value)>=4.0)
+                    ORDER BY avg_rating DESC LIMIT ?''', (limit,)).fetchall()]
+        return self.cache.get_or_set(f"top_{limit}", gen)
 
-    def get_entry_with_details(self, entry_id: str) -> Optional[Dict]:
+    def get_entry_with_details(self, eid):
         def gen():
-            try:
-                entry = self.db.get_entry_details(entry_id)
-                if not entry:
-                    return None
-                entry['comments'] = self.db.get_entry_comments(entry_id)
-                avg, cnt = self.db.get_entry_ratings(entry_id)
-                entry['avg_rating'] = avg
-                entry['rating_count'] = cnt
-                if entry.get('filepath'):
-                    mp = Config.DATA_DIR / entry['filepath']
-                    if mp.exists():
-                        if entry['media_type'] == MediaType.IMAGE.value:
-                            entry['media_data_url'] = self.media_processor.get_media_data_url(mp)
-                        else:
-                            entry['media_path'] = str(mp)
-                for key in ['thumbnail_path', 'video_thumbnail_path']:
-                    if entry.get(key):
-                        tp = Path(entry[key])
-                        if tp.exists():
-                            entry['thumbnail_data_url'] = self.media_processor.get_media_data_url(tp)
-                            break
-                uid = st.session_state['user_id']
-                with sqlite3.connect(self.db.db_path) as conn:
-                    c = conn.cursor()
-                    c.execute('SELECT 1 FROM user_favorites WHERE user_id=? AND entry_id=?', (uid, entry_id))
-                    entry['is_favorited'] = c.fetchone() is not None
-                    c.execute('SELECT rating_value FROM ratings WHERE user_id=? AND entry_id=?', (uid, entry_id))
-                    ur = c.fetchone()
-                    entry['user_rating'] = ur[0] if ur else 0
-                return entry
-            except Exception as e:
-                st.error(f"Error getting entry: {str(e)}")
-                return None
-        return self.cache.get_or_set(f"entry_{entry_id}", gen)
+            entry = self.db.get_entry_details(eid)
+            if not entry: return None
+            entry['comments'] = self.db.get_entry_comments(eid)
+            avg, cnt = self.db.get_entry_ratings(eid)
+            entry['avg_rating'] = avg; entry['rating_count'] = cnt
+            if entry.get('filepath'):
+                mp = Config.DATA_DIR / entry['filepath']
+                if mp.exists():
+                    if entry['media_type'] == MediaType.IMAGE.value:
+                        entry['media_data_url'] = self.mp.get_hd_data_url(mp)
+                        entry['media_path'] = str(mp)
+                    else:
+                        entry['media_path'] = str(mp)
+            for k in ['thumbnail_path', 'video_thumbnail_path']:
+                if entry.get(k):
+                    tp = Path(entry[k])
+                    if tp.exists():
+                        entry['thumbnail_data_url'] = self.mp.get_media_data_url(tp); break
+            uid = st.session_state['user_id']
+            with sqlite3.connect(self.db.db_path) as conn:
+                c = conn.cursor()
+                c.execute('SELECT 1 FROM user_favorites WHERE user_id=? AND entry_id=?', (uid, eid))
+                entry['is_favorited'] = c.fetchone() is not None
+                c.execute('SELECT rating_value FROM ratings WHERE user_id=? AND entry_id=?', (uid, eid))
+                ur = c.fetchone(); entry['user_rating'] = ur[0] if ur else 0
+            return entry
+        return self.cache.get_or_set(f"entry_{eid}", gen)
 
-    def stream_video(self, video_path: str):
+    def stream_video(self, vp):
         try:
-            vp = Path(video_path)
-            if not vp.exists():
-                st.error("Video file not found")
-                return
+            vp = Path(vp)
+            if not vp.exists(): st.error("Video not found"); return
             vd = self.cache.get_video(vp)
             if not vd:
-                vd = self.media_processor.prepare_video_stream(vp)
-                if vd:
-                    self.cache.set_video(vp, vd)
+                vd = self.mp.prepare_video_stream(vp)
+                if vd: self.cache.set_video(vp, vd)
             if vd:
-                mt, _ = mimetypes.guess_type(video_path)
-                st.video(vd, format=mt or "video/mp4", start_time=0)
-            else:
-                st.error("Could not load video")
+                mt, _ = mimetypes.guess_type(str(vp))
+                st.video(vd, format=mt or "video/mp4")
+            else: st.error("Could not load video")
         except Exception as e:
-            st.error(f"Error streaming video: {str(e)}")
+            st.error(f"Video error: {e}")
+
+    def get_directory_tree(self) -> Dict[str, List[Dict]]:
+        tree = {}
+        people = self.db.get_all_people()
+        for p in people:
+            pid = p['person_id']
+            entries = self.db.get_all_entries_with_details(pid)
+            tree[p['folder_name']] = {
+                'person_id': pid, 'display_name': p['display_name'],
+                'entries': entries, 'image_count': sum(1 for e in entries if e.get('media_type') == MediaType.IMAGE.value),
+                'video_count': sum(1 for e in entries if e.get('media_type') == MediaType.VIDEO.value),
+            }
+        return tree
 
 
 # ============================================================================
-# MAIN APPLICATION CLASS
+# MAIN APPLICATION
 # ============================================================================
 class PhotoVideoAlbumApp:
     def __init__(self):
-        self.manager = AlbumManager()
+        self.mgr = AlbumManager()
         self.setup_page_config()
-        self.check_initialization()
+        self.check_init()
 
     def setup_page_config(self):
-        st.set_page_config(
-            page_title=Config.APP_NAME, page_icon="🎬📸", layout="wide",
-            initial_sidebar_state="expanded",
-            menu_items={
-                'Get Help': 'https://github.com/yourusername/photo-video-album',
-                'Report a bug': 'https://github.com/yourusername/photo-video-album/issues',
-                'About': f"# {Config.APP_NAME} v{Config.VERSION}"
-            })
+        st.set_page_config(page_title=Config.APP_NAME, page_icon="🎬📸", layout="wide",
+                           initial_sidebar_state="expanded",
+                           menu_items={'About': f"# {Config.APP_NAME} v{Config.VERSION}"})
 
-    def check_initialization(self):
-        try:
-            Config.init_directories()
-            self.initialized = True
-        except Exception as e:
-            st.error(f"Initialization error: {str(e)}")
-            self.initialized = False
+    def check_init(self):
+        try: Config.init_directories(); self.initialized = True
+        except Exception as e: st.error(f"Init error: {e}"); self.initialized = False
 
-    # ── helper: get current frame style ───────────────────────────────
     @property
-    def frame_style(self) -> str:
-        return st.session_state.get('frame_style', Config.DEFAULT_FRAME_STYLE)
+    def fs(self): return st.session_state.get('frame_style', Config.DEFAULT_FRAME_STYLE)
 
-    # ── SIDEBAR ───────────────────────────────────────────────────────
+    def _thumb_url(self, entry):
+        for k in ['thumbnail_path', 'video_thumbnail_path']:
+            if entry.get(k):
+                tp = Path(entry[k])
+                if tp.exists(): return self.mgr.mp.get_media_data_url(tp)
+        return None
+
+    def _hd_url(self, entry):
+        if entry.get('media_type') == MediaType.IMAGE.value and entry.get('filepath'):
+            mp = Config.DATA_DIR / entry['filepath']
+            if mp.exists(): return self.mgr.mp.get_hd_data_url(mp)
+        return self._thumb_url(entry)
+
+    # ── SIDEBAR with DIRECTORY PANEL ──────────────────────────────────
     def render_sidebar(self):
         with st.sidebar:
             st.title(f"🎬📸 {Config.APP_NAME}")
             st.caption(f"v{Config.VERSION}")
             st.divider()
 
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.markdown("👤")
-            with col2:
+            c1, c2 = st.columns([1, 3])
+            with c1: st.markdown("👤")
+            with c2:
                 st.markdown(f"**{st.session_state['username']}**")
                 st.caption(st.session_state['user_role'].title())
 
             st.divider()
-            st.subheader("Navigation")
-            nav = {"🏠 Dashboard": "dashboard", "👥 People": "people",
-                   "📁 Media Gallery": "gallery", "⭐ Favorites": "favorites",
-                   "🎬 Video Library": "videos", "📸 Photo Library": "photos",
-                   "🔍 Search": "search", "📊 Statistics": "statistics",
-                   "⚙️ Settings": "settings", "📤 Import/Export": "import_export"}
+            st.subheader("🧭 Navigation")
+            nav = {"🏠 Dashboard": "dashboard", "📁 Media Gallery": "gallery",
+                   "⭐ Favorites": "favorites", "🎬 Videos": "videos",
+                   "📸 Photos": "photos", "🔍 Search": "search",
+                   "📊 Statistics": "statistics", "⚙️ Settings": "settings",
+                   "📤 Import/Export": "import_export"}
             for label, key in nav.items():
                 if st.button(label, use_container_width=True, key=f"nav_{key}"):
                     st.session_state['current_page'] = key
+                    st.session_state['selected_person'] = None
                     st.rerun()
 
             st.divider()
-            st.subheader("Quick Actions")
             if st.button("🔄 Scan Directory", use_container_width=True):
                 with st.spinner("Scanning…"):
-                    r = self.manager.scan_directory()
+                    r = self.mgr.scan_directory()
                     if r['new_media'] > 0:
-                        st.success(f"Found {r['new_media']} new media ({r['images_found']} imgs, {r['videos_found']} vids)")
+                        st.success(f"Found {r['new_media']} new media!")
                     st.rerun()
             if st.button("🗑️ Clear Cache", use_container_width=True):
-                self.manager.cache.clear()
-                st.success("Cache cleared!")
-                st.rerun()
+                self.mgr.cache.clear(); st.success("Cleared!"); st.rerun()
 
             st.divider()
-            st.subheader("Frame Style")
-            fs = st.selectbox("Choose frame", Config.FRAME_STYLES,
-                              index=Config.FRAME_STYLES.index(self.frame_style),
-                              key="frame_style_selector")
-            if fs != self.frame_style:
-                st.session_state['frame_style'] = fs
-                st.rerun()
+            st.subheader("🖼️ Frame Style")
+            fsi = st.selectbox("Frame", Config.FRAME_STYLES,
+                               index=Config.FRAME_STYLES.index(self.fs), key="fs_sel")
+            if fsi != self.fs:
+                st.session_state['frame_style'] = fsi; st.rerun()
 
+            # ── DIRECTORY TREE PANEL ──────────────────────────────────
             st.divider()
-            people = self.manager.db.get_all_people()
+            st.subheader("📂 Directories")
+            tree = self.mgr.get_directory_tree()
+
+            for folder, info in tree.items():
+                is_expanded = st.session_state.get('dir_expanded', {}).get(folder, False)
+                is_active = st.session_state.get('selected_person') == info['person_id']
+
+                dir_label = f"{'📂' if is_expanded else '📁'} {info['display_name']}"
+                count_label = f"📸{info['image_count']} 🎬{info['video_count']}"
+
+                dir_col1, dir_col2 = st.columns([4, 1])
+                with dir_col1:
+                    if st.button(dir_label, key=f"dir_{folder}", use_container_width=True):
+                        st.session_state['selected_person'] = info['person_id']
+                        st.session_state['current_page'] = 'gallery'
+                        if folder not in st.session_state.get('dir_expanded', {}):
+                            st.session_state.setdefault('dir_expanded', {})[folder] = True
+                        else:
+                            st.session_state['dir_expanded'][folder] = not st.session_state.get('dir_expanded', {}).get(folder, False)
+                        st.rerun()
+                with dir_col2:
+                    st.caption(count_label)
+
+                # Show files inside if expanded
+                if st.session_state.get('dir_expanded', {}).get(folder, False) and info['entries']:
+                    for entry in info['entries'][:20]:
+                        icon = "🎬" if entry.get('media_type') == MediaType.VIDEO.value else "🖼️"
+                        fname = entry.get('caption', entry.get('filename', ''))
+                        if st.button(f"  {icon} {fname[:30]}", key=f"df_{entry['entry_id']}",
+                                     use_container_width=True):
+                            st.session_state['selected_media'] = entry['entry_id']
+                            st.session_state['current_page'] = 'media_detail'
+                            st.rerun()
+                    if len(info['entries']) > 20:
+                        st.caption(f"  … +{len(info['entries'])-20} more")
+
+            # Global stats
+            st.divider()
+            people = self.mgr.db.get_all_people()
             ti = tv = 0
             for p in people:
-                s = self.manager.get_person_stats(p['person_id'])
-                ti += s.get('image_count', 0)
-                tv += s.get('video_count', 0)
+                s = self.mgr.get_person_stats(p['person_id'])
+                ti += s['image_count']; tv += s['video_count']
             st.metric("People", len(people))
-            c1, c2 = st.columns(2)
-            with c1: st.metric("Images", ti)
-            with c2: st.metric("Videos", tv)
-
-            st.divider()
-            autoplay = st.toggle("Video Autoplay", value=st.session_state.get('video_autoplay', False))
-            if autoplay != st.session_state.get('video_autoplay', False):
-                st.session_state['video_autoplay'] = autoplay
+            sc1, sc2 = st.columns(2)
+            with sc1: st.metric("Images", ti)
+            with sc2: st.metric("Videos", tv)
 
     # ── DASHBOARD ─────────────────────────────────────────────────────
     def render_dashboard(self):
         render_breadcrumb([("🏠 Home", "dashboard")])
         st.title("📊 Dashboard")
-        st.markdown("Welcome to your photo & video album!")
-
-        people = self.manager.db.get_all_people()
+        people = self.mgr.db.get_all_people()
         tm = ti = tv = 0
         for p in people:
-            s = self.manager.get_person_stats(p['person_id'])
-            tm += s['media_count']
-            ti += s['image_count']
-            tv += s['video_count']
-
+            s = self.mgr.get_person_stats(p['person_id'])
+            tm += s['media_count']; ti += s['image_count']; tv += s['video_count']
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.metric("👥 People", len(people))
-        with c2: st.metric("📸🎬 Total Media", tm)
+        with c2: st.metric("📸🎬 Media", tm)
         with c3:
-            recent = self.manager.get_recent_entries(1)
-            st.metric("🕐 Last Added", recent[0].get('caption', 'N/A') if recent else 'None')
+            r = self.mgr.get_recent_entries(1)
+            st.metric("🕐 Last", r[0].get('caption', 'N/A')[:15] if r else 'None')
         with c4:
-            top = self.manager.get_top_rated_entries(1)
-            st.metric("⭐ Top Rated", f"{top[0].get('avg_rating',0):.1f}/5" if top else "N/A")
-
+            t = self.mgr.get_top_rated_entries(1)
+            st.metric("⭐ Top", f"{t[0].get('avg_rating',0):.1f}/5" if t else "N/A")
         st.divider()
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("📊 Media Distribution")
+            st.subheader("📊 Distribution")
             if tm > 0:
                 st.bar_chart(pd.DataFrame({'Type': ['Images', 'Videos'], 'Count': [ti, tv]}).set_index('Type'))
         with c2:
@@ -1821,329 +1291,321 @@ class PhotoVideoAlbumApp:
             ca, cb = st.columns(2)
             with ca: st.metric("Images", ti); st.metric("Videos", tv)
             with cb: st.metric("People", len(people))
-            if tm > 0 and len(people) > 0:
-                st.metric("Avg/Person", f"{tm/len(people):.1f}")
-
         st.divider()
-        st.subheader("📅 Recent Activity")
-        for entry in self.manager.get_recent_entries(5):
+        st.subheader("📅 Recent")
+        for e in self.mgr.get_recent_entries(5):
             with st.container():
                 ca, cb = st.columns([1, 4])
                 with ca:
-                    thumb = None
-                    for k in ['thumbnail_path', 'video_thumbnail_path']:
-                        if entry.get(k):
-                            tp = Path(entry[k])
-                            if tp.exists():
-                                thumb = self.manager.media_processor.get_media_data_url(tp)
-                                break
-                    if thumb:
-                        st.markdown(FrameRenderer.wrap_thumbnail(
-                            thumb, entry.get('caption', ''),
-                            self.frame_style,
-                            entry.get('media_type') == MediaType.VIDEO.value,
-                            entry.get('duration')), unsafe_allow_html=True)
+                    tu = self._thumb_url(e)
+                    if tu:
+                        st.markdown(FrameRenderer.wrap_thumbnail(tu, e.get('caption', ''), self.fs,
+                            e.get('media_type') == MediaType.VIDEO.value, e.get('duration')), unsafe_allow_html=True)
                     else:
-                        st.markdown("🎬" if entry.get('media_type') == MediaType.VIDEO.value else "📸")
+                        st.markdown("🎬" if e.get('media_type') == MediaType.VIDEO.value else "📸")
                 with cb:
-                    st.markdown(f"**{entry.get('caption','Untitled')}**")
-                    st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')),
-                                unsafe_allow_html=True)
-                    st.caption(f"👤 {entry.get('display_name','Unknown')}")
+                    st.markdown(f"**{e.get('caption','Untitled')}**")
+                    st.markdown(UIComponents.media_type_badge(e.get('media_type', 'image')), unsafe_allow_html=True)
+                    st.caption(f"👤 {e.get('display_name','')}")
                 st.divider()
 
-        st.divider()
-        ca, cb, cc = st.columns(3)
-        with ca:
-            if st.button("📁 Scan for New Media", use_container_width=True):
-                r = self.manager.scan_directory()
-                st.success(f"Found {r['new_media']} new media!")
-                st.rerun()
-        with cb:
-            if st.button("👥 Manage People", use_container_width=True):
-                st.session_state['current_page'] = 'people'; st.rerun()
-        with cc:
-            if st.button("🎬 View Videos", use_container_width=True):
-                st.session_state['current_page'] = 'videos'; st.rerun()
-
-    # ── PEOPLE PAGE ───────────────────────────────────────────────────
-    def render_people_page(self):
-        render_breadcrumb([("🏠 Home", "dashboard"), ("👥 People", "people")])
-        st.title("👥 People")
-
-        c1, c2 = st.columns([3, 1])
-        with c1: sq = st.text_input("Search people…", key="people_search")
-        with c2: sb = st.selectbox("Sort by", ["Name", "Recently Added", "Media Count"], key="people_sort")
-
-        all_people = self.manager.get_all_people_with_stats()
-        if sq:
-            all_people = [p for p in all_people if sq.lower() in p['display_name'].lower()]
-        if sb == "Name": all_people.sort(key=lambda x: x['display_name'])
-        elif sb == "Media Count": all_people.sort(key=lambda x: x['media_count'], reverse=True)
-        elif sb == "Recently Added": all_people.sort(key=lambda x: x.get('last_activity', ''), reverse=True)
-
-        cols = st.columns(3)
-        for idx, person in enumerate(all_people):
-            with cols[idx % 3]:
-                with st.container(border=True):
-                    if person.get('profile_image_data'):
-                        st.image(person['profile_image_data'], use_column_width=True)
-                    else:
-                        colors = ['#667eea', '#764ba2', '#f56565', '#48bb78', '#ed8936']
-                        color = colors[hash(person['person_id']) % len(colors)]
-                        st.markdown(
-                            f'<div style="background:{color};height:150px;border-radius:10px;'
-                            f'display:flex;align-items:center;justify-content:center;">'
-                            f'<span style="color:#fff;font-size:48px;">{person["display_name"][0].upper()}</span></div>',
-                            unsafe_allow_html=True)
-                    st.subheader(person['display_name'])
-                    st.caption(f"📁 {person['folder_name']}")
-                    ca, cb, cc = st.columns(3)
-                    with ca: st.metric("Media", person.get('media_count', 0))
-                    with cb: st.metric("Images", person.get('image_count', 0))
-                    with cc: st.metric("Videos", person.get('video_count', 0))
-                    if st.button("View Gallery", key=f"view_{person['person_id']}", use_container_width=True):
-                        st.session_state['selected_person'] = person['person_id']
-                        st.session_state['current_page'] = 'gallery'
-                        st.rerun()
-
-        st.divider()
-        with st.expander("➕ Add New Person"):
-            with st.form("add_person_form"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    fn = st.text_input("Folder Name*")
-                    dn = st.text_input("Display Name*")
-                    rel = st.selectbox("Relationship", ["Family", "Friend", "Colleague", "Relative", "Other"])
-                with c2:
-                    bd = st.date_input("Birth Date", value=None)
-                    ci = st.text_input("Contact Info")
-                    bio = st.text_area("Bio", height=100)
-                if st.form_submit_button("Add Person"):
-                    if fn and dn:
-                        pd_dir = Config.DATA_DIR / fn
-                        pd_dir.mkdir(exist_ok=True)
-                        pp = PersonProfile(person_id=str(uuid.uuid4()), folder_name=fn,
-                                           display_name=dn, bio=bio, birth_date=bd,
-                                           relationship=rel, contact_info=ci,
-                                           social_links={}, profile_image=None,
-                                           created_at=datetime.datetime.now())
-                        try:
-                            self.manager.db.add_person(pp)
-                            st.success(f"Person '{dn}' added!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-                    else:
-                        st.warning("Fill in required fields (*)")
-
-    # ── GALLERY PAGE ──────────────────────────────────────────────────
+    # ── GALLERY ───────────────────────────────────────────────────────
     def render_gallery_page(self):
         sp = st.session_state.get('selected_person')
         if sp:
-            people = self.manager.db.get_all_people()
+            people = self.mgr.db.get_all_people()
             sel = next((p for p in people if p['person_id'] == sp), None)
             if sel:
-                render_breadcrumb([("🏠 Home", "dashboard"), ("👥 People", "people"),
+                render_breadcrumb([("🏠 Home", "dashboard"), ("📁 Gallery", "gallery"),
                                    (sel['display_name'], "gallery")])
-                st.subheader(f"📁 Media of {sel['display_name']}")
-                if st.button("← Back to All People"):
-                    st.session_state['selected_person'] = None
-                    st.rerun()
         else:
             render_breadcrumb([("🏠 Home", "dashboard"), ("📁 Gallery", "gallery")])
-            st.title("📁 Media Gallery")
+        st.title("📁 Media Gallery")
 
         with st.container():
-            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-            with c1: sq = st.text_input("Search media…", key="gallery_search")
+            c1, c2, c3 = st.columns([2, 1, 1])
+            with c1: sq = st.text_input("Search…", key="gsearch")
             with c2:
                 mf_opts = ["All", "Image", "Video"]
                 cur = st.session_state.get('media_filter', 'all')
                 di = {'all': 0, 'image': 1, 'video': 2}.get(cur, 0)
-                mfd = st.selectbox("Media Type", mf_opts, key="mf_display", index=di)
+                mfd = st.selectbox("Type", mf_opts, index=di, key="mfd")
                 st.session_state['media_filter'] = {'All': 'all', 'Image': 'image', 'Video': 'video'}[mfd]
-            with c3: vm = st.selectbox("View", ["Grid", "List"], key="view_mode")
-            with c4: ipp = st.selectbox("Per Page", [12, 24, 48], key="ipp")
+            with c3:
+                vm = st.selectbox("View", ["Grid", "List", "Slider"], key="vm")
 
+        mf = st.session_state['media_filter']
         page = st.session_state.get('gallery_page', 1)
+
         if sp:
-            data = self.manager.get_entries_by_person(sp, page, sq, st.session_state['media_filter'])
+            data = self.mgr.get_entries_by_person(sp, page, sq, mf)
+            all_entries = self.mgr.db.get_all_entries_with_details(sp, mf)
         else:
-            offset = (page - 1) * ipp
-            with sqlite3.connect(self.manager.db.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                conds, params = [], []
-                if sq:
-                    sp2 = f'%{sq}%'
-                    conds.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
-                    params.extend([sp2, sp2, sp2])
-                mf = st.session_state['media_filter']
-                if mf != 'all':
-                    conds.append("m.media_type = ?")
-                    params.append(mf)
-                where = " AND ".join(conds) if conds else "1=1"
-                params.extend([ipp, offset])
-                c.execute(f'''SELECT ae.*, p.display_name, m.filename, m.media_type,
-                              m.thumbnail_path, m.video_thumbnail_path, m.duration,
-                              (SELECT AVG(rating_value) FROM ratings r WHERE r.entry_id=ae.entry_id) as avg_rating
-                              FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
-                              JOIN media m ON ae.media_id=m.media_id
-                              WHERE {where} ORDER BY ae.created_at DESC LIMIT ? OFFSET ?''', params)
-                entries = [dict(row) for row in c.fetchall()]
-                cnt_params = []
-                if sq:
-                    sp2 = f'%{sq}%'
-                    cnt_conds = ["(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)"]
-                    cnt_params.extend([sp2, sp2, sp2])
-                    if mf != 'all':
-                        cnt_conds.append("m.media_type = ?")
-                        cnt_params.append(mf)
-                    cnt_where = " AND ".join(cnt_conds)
-                else:
-                    if mf != 'all':
-                        cnt_where = "m.media_type = ?"
-                        cnt_params.append(mf)
-                    else:
-                        cnt_where = "1=1"
-                c.execute(f'SELECT COUNT(*) FROM album_entries ae JOIN media m ON ae.media_id=m.media_id WHERE {cnt_where}',
-                          cnt_params)
-                total = c.fetchone()[0]
-                data = {'entries': entries, 'total_count': total,
-                        'total_pages': max(1, math.ceil(total / ipp)), 'current_page': page}
+            data = self._get_all_entries_page(page, sq, mf)
+            all_entries = self.mgr.db.get_all_entries_with_details(None, mf)
 
-        if vm == "Grid":
+        if vm == "Slider":
+            self._render_slider(all_entries)
+        elif vm == "Grid":
             cols = st.columns(4)
-            for idx, entry in enumerate(data['entries']):
+            for idx, e in enumerate(data['entries']):
                 with cols[idx % 4]:
-                    self._render_gallery_item(entry)
+                    self._render_gallery_item(e)
         else:
-            for entry in data['entries']:
-                self._render_gallery_item_list(entry)
+            for e in data['entries']:
+                self._render_gallery_item_list(e)
 
-        if data['total_pages'] > 1:
+        if vm != "Slider" and data.get('total_pages', 1) > 1:
             st.divider()
-            c1, c2, c3 = st.columns([1, 2, 1])
-            with c2:
-                pnums = []
-                for i in range(1, data['total_pages'] + 1):
-                    if i == 1 or i == data['total_pages'] or abs(i - page) <= 2:
-                        pnums.append(i)
-                    elif pnums[-1] != "...":
-                        pnums.append("...")
-                btns = st.columns(len(pnums) + 2)
-                with btns[0]:
-                    if page > 1 and st.button("◀", key="prev_page"):
-                        st.session_state.gallery_page = page - 1; st.rerun()
-                for bi, pn in enumerate(pnums, 1):
-                    with btns[bi]:
-                        if pn == "...":
-                            st.markdown("…")
-                        elif pn == page:
-                            st.markdown(f"**{pn}**")
-                        elif st.button(str(pn), key=f"pg_{pn}"):
-                            st.session_state.gallery_page = pn; st.rerun()
-                with btns[-1]:
-                    if page < data['total_pages'] and st.button("▶", key="next_page"):
-                        st.session_state.gallery_page = page + 1; st.rerun()
+            self._render_pagination(data, page)
 
-    def _get_thumbnail_url(self, entry: Dict) -> Optional[str]:
-        for key in ['thumbnail_path', 'video_thumbnail_path']:
-            if entry.get(key):
-                tp = Path(entry[key])
-                if tp.exists():
-                    return self.manager.media_processor.get_media_data_url(tp)
-        return None
+    def _get_all_entries_page(self, page, sq, mf):
+        ipp = Config.ITEMS_PER_PAGE; off = (page - 1) * ipp
+        with sqlite3.connect(self.mgr.db.db_path) as conn:
+            conn.row_factory = sqlite3.Row; c = conn.cursor()
+            conds, params = [], []
+            if sq:
+                sp = f'%{sq}%'; conds.append("(ae.caption LIKE ? OR ae.description LIKE ? OR ae.tags LIKE ?)")
+                params.extend([sp, sp, sp])
+            if mf != 'all': conds.append("m.media_type=?"); params.append(mf)
+            w = " AND ".join(conds) if conds else "1=1"
+            params.extend([ipp, off])
+            c.execute(f'''SELECT ae.*,p.display_name,m.filename,m.media_type,m.thumbnail_path,
+                m.video_thumbnail_path,m.duration,m.filepath,
+                (SELECT AVG(rating_value)FROM ratings r WHERE r.entry_id=ae.entry_id)as avg_rating
+                FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
+                JOIN media m ON ae.media_id=m.media_id WHERE {w}
+                ORDER BY ae.created_at DESC LIMIT ? OFFSET ?''', params)
+            entries = [dict(r) for r in c.fetchall()]
+            c.execute(f'SELECT COUNT(*)FROM album_entries ae JOIN media m ON ae.media_id=m.media_id WHERE {w}',
+                      params[:-2])
+            total = c.fetchone()[0]
+            return {'entries': entries, 'total_count': total,
+                    'total_pages': max(1, math.ceil(total / ipp)), 'current_page': page}
 
-    def _render_gallery_item(self, entry: Dict):
-        with st.container(border=True):
-            st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')),
+    def _render_pagination(self, data, page):
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            pnums = []
+            for i in range(1, data['total_pages'] + 1):
+                if i == 1 or i == data['total_pages'] or abs(i - page) <= 2:
+                    pnums.append(i)
+                elif pnums[-1] != "...": pnums.append("...")
+            btns = st.columns(len(pnums) + 2)
+            with btns[0]:
+                if page > 1 and st.button("◀", key="pp"):
+                    st.session_state.gallery_page = page - 1; st.rerun()
+            for bi, pn in enumerate(pnums, 1):
+                with btns[bi]:
+                    if pn == "...": st.markdown("…")
+                    elif pn == page: st.markdown(f"**{pn}**")
+                    elif st.button(str(pn), key=f"pg{pn}"):
+                        st.session_state.gallery_page = pn; st.rerun()
+            with btns[-1]:
+                if page < data['total_pages'] and st.button("▶", key="np"):
+                    st.session_state.gallery_page = page + 1; st.rerun()
+
+    # ── HD SLIDER VIEW ────────────────────────────────────────────────
+    def _render_slider(self, entries):
+        if not entries:
+            st.info("No media to display in slider.")
+            return
+
+        image_entries = [e for e in entries if e.get('media_type') == MediaType.IMAGE.value]
+        if not image_entries:
+            st.info("No images for slider view.")
+            return
+
+        idx = st.session_state.get('slider_index', 0)
+        if idx >= len(image_entries): idx = 0; st.session_state['slider_index'] = 0
+        entry = image_entries[idx]
+
+        # Caption / counter
+        st.markdown(f'<div class="slider-counter">{idx+1} of {len(image_entries)} — '
+                    f'{entry.get("caption","Untitled")}</div>', unsafe_allow_html=True)
+
+        # ── Navigation + HD image ────────────────────────────────────
+        nav_cols = st.columns([1, 14, 1])
+
+        with nav_cols[0]:
+            st.markdown("<div style='display:flex;align-items:center;height:100%;justify-content:center;'>",
                         unsafe_allow_html=True)
-            thumb = self._get_thumbnail_url(entry)
-            is_vid = entry.get('media_type') == MediaType.VIDEO.value
-
-            if thumb:
-                st.markdown(FrameRenderer.wrap_thumbnail(
-                    thumb, entry.get('caption', ''),
-                    self.frame_style, is_vid, entry.get('duration')),
-                    unsafe_allow_html=True)
+            if idx > 0:
+                if st.button("⬅", key="sl_prev", use_container_width=True):
+                    st.session_state['slider_index'] = idx - 1; st.rerun()
             else:
-                st.markdown("🎬" if is_vid else "📸")
-
-            st.markdown(f"**{entry.get('caption', 'Untitled')}**")
-            st.caption(f"👤 {entry.get('display_name', 'Unknown')}")
-            if entry.get('avg_rating'):
-                st.markdown(UIComponents.rating_stars(entry['avg_rating'], size=15),
+                st.markdown("<div style='opacity:0.3;text-align:center;font-size:24px;'>⬅</div>",
                             unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                if st.button("👁️", key=f"view_{entry['entry_id']}", use_container_width=True):
+        with nav_cols[1]:
+            hd_url = self._hd_url(entry)
+            if hd_url:
+                st.markdown(FrameRenderer.wrap_detail(hd_url, self.fs), unsafe_allow_html=True)
+            else:
+                st.warning("Image not available")
+
+            # Info bar under image
+            info_c1, info_c2, info_c3 = st.columns([2, 2, 1])
+            with info_c1:
+                st.markdown(f"**{entry.get('caption','Untitled')}**")
+                st.caption(f"👤 {entry.get('display_name','')}")
+            with info_c2:
+                if entry.get('filepath'):
+                    mp = Config.DATA_DIR / entry['filepath']
+                    if mp.exists():
+                        with open(mp, 'rb') as f:
+                            st.download_button("💾 Download Original", data=f.read(),
+                                               file_name=mp.name, key=f"sldl_{idx}", use_container_width=True)
+            with info_c3:
+                if st.button("👁️ Detail", key=f"slview_{idx}", use_container_width=True):
                     st.session_state['selected_media'] = entry['entry_id']
                     st.session_state['current_page'] = 'media_detail'
                     st.rerun()
+
+        with nav_cols[2]:
+            st.markdown("<div style='display:flex;align-items:center;height:100%;justify-content:center;'>",
+                        unsafe_allow_html=True)
+            if idx < len(image_entries) - 1:
+                if st.button("➡", key="sl_next", use_container_width=True):
+                    st.session_state['slider_index'] = idx + 1; st.rerun()
+            else:
+                st.markdown("<div style='opacity:0.3;text-align:center;font-size:24px;'>➡</div>",
+                            unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── CLICKABLE THUMBNAIL STRIP ────────────────────────────────
+        st.markdown("---")
+        self._render_thumb_strip(image_entries, idx)
+
+    def _render_thumb_strip(self, entries, current_idx):
+        """Render a scrollable clickable thumbnail strip at the bottom."""
+        total = len(entries)
+        window_size = Config.SLIDER_THUMB_COUNT
+
+        # Calculate visible window centered on current
+        half = window_size // 2
+        start = max(0, current_idx - half)
+        end = min(total, start + window_size)
+        start = max(0, end - window_size)
+
+        visible = entries[start:end]
+
+        # Scroll controls
+        strip_cols = st.columns([1, 20, 1])
+        with strip_cols[0]:
+            if start > 0:
+                if st.button("◀◀", key="thumb_scroll_left"):
+                    new_idx = max(0, current_idx - window_size)
+                    st.session_state['slider_index'] = new_idx; st.rerun()
+
+        with strip_cols[1]:
+            # Build HTML thumbnail strip
+            thumb_html = '<div class="thumb-strip">'
+            for i, e in enumerate(visible):
+                real_idx = start + i
+                tu = self._thumb_url(e)
+                active = " active" if real_idx == current_idx else ""
+                if tu:
+                    thumb_html += f'''<div class="thumb-item{active}" title="{e.get('caption','')}"
+                        onclick="document.getElementById('thumb_btn_{real_idx}').click()">
+                        <img src="{tu}" alt="{e.get('caption','')}"></div>'''
+                else:
+                    thumb_html += f'''<div class="thumb-item{active}"
+                        onclick="document.getElementById('thumb_btn_{real_idx}').click()">
+                        <div style="width:72px;height:54px;background:#f0f0f0;display:flex;align-items:center;
+                        justify-content:center;font-size:20px;">🖼️</div></div>'''
+            thumb_html += '</div>'
+            st.markdown(thumb_html, unsafe_allow_html=True)
+
+            # Hidden buttons for each thumbnail (triggered by JS onclick)
+            btn_cols = st.columns(len(visible))
+            for i, e in enumerate(visible):
+                real_idx = start + i
+                with btn_cols[i]:
+                    # Use a very small button that acts as a click target
+                    if st.button("·", key=f"thumb_btn_{real_idx}",
+                                 help=f"{e.get('caption','')} ({real_idx+1}/{total})"):
+                        st.session_state['slider_index'] = real_idx; st.rerun()
+
+        with strip_cols[2]:
+            if end < total:
+                if st.button("▶▶", key="thumb_scroll_right"):
+                    new_idx = min(total - 1, current_idx + window_size)
+                    st.session_state['slider_index'] = new_idx; st.rerun()
+
+        # Page indicator
+        st.markdown(f'<div class="slider-counter">Showing {start+1}–{end} of {total}</div>',
+                    unsafe_allow_html=True)
+
+    # ── GALLERY ITEMS ─────────────────────────────────────────────────
+    def _render_gallery_item(self, entry):
+        with st.container(border=True):
+            st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')), unsafe_allow_html=True)
+            tu = self._thumb_url(entry)
+            is_vid = entry.get('media_type') == MediaType.VIDEO.value
+            if tu:
+                st.markdown(FrameRenderer.wrap_thumbnail(tu, entry.get('caption', ''), self.fs,
+                    is_vid, entry.get('duration')), unsafe_allow_html=True)
+            else:
+                st.markdown("🎬" if is_vid else "📸")
+            st.markdown(f"**{entry.get('caption','Untitled')}**")
+            st.caption(f"👤 {entry.get('display_name','')}")
+            if entry.get('avg_rating'):
+                st.markdown(UIComponents.rating_stars(entry['avg_rating'], size=15), unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("👁️", key=f"gv_{entry['entry_id']}", use_container_width=True):
+                    st.session_state['selected_media'] = entry['entry_id']
+                    st.session_state['current_page'] = 'media_detail'; st.rerun()
             with c2:
                 fav = entry['entry_id'] in st.session_state.get('favorites', set())
                 if fav:
-                    if st.button("⭐", key=f"ufav_{entry['entry_id']}", use_container_width=True):
-                        self.manager.remove_from_favorites(entry['entry_id']); st.rerun()
+                    if st.button("⭐", key=f"gf_{entry['entry_id']}", use_container_width=True):
+                        self.mgr.remove_from_favorites(entry['entry_id']); st.rerun()
                 else:
-                    if st.button("☆", key=f"fav_{entry['entry_id']}", use_container_width=True):
-                        self.manager.add_to_favorites(entry['entry_id']); st.rerun()
+                    if st.button("☆", key=f"guf_{entry['entry_id']}", use_container_width=True):
+                        self.mgr.add_to_favorites(entry['entry_id']); st.rerun()
             with c3:
-                # download button for images
                 if not is_vid and entry.get('filepath'):
                     mp = Config.DATA_DIR / entry['filepath']
                     if mp.exists():
                         with open(mp, 'rb') as f:
-                            st.download_button("💾", data=f.read(),
-                                               file_name=mp.name,
-                                               key=f"dl_{entry['entry_id']}",
-                                               use_container_width=True)
+                            st.download_button("💾", data=f.read(), file_name=mp.name,
+                                               key=f"gdl_{entry['entry_id']}", use_container_width=True)
 
-    def _render_gallery_item_list(self, entry: Dict):
+    def _render_gallery_item_list(self, entry):
         with st.container(border=True):
             c1, c2, c3 = st.columns([1, 3, 1])
             with c1:
-                thumb = self._get_thumbnail_url(entry)
+                tu = self._thumb_url(entry)
                 is_vid = entry.get('media_type') == MediaType.VIDEO.value
-                if thumb:
-                    st.markdown(FrameRenderer.wrap_thumbnail(
-                        thumb, '', self.frame_style, is_vid, entry.get('duration')),
-                        unsafe_allow_html=True)
+                if tu:
+                    st.markdown(FrameRenderer.wrap_thumbnail(tu, '', self.fs, is_vid, entry.get('duration')),
+                                unsafe_allow_html=True)
                 else:
                     st.markdown("🎬" if is_vid else "📸")
             with c2:
-                st.markdown(f"### {entry.get('caption', 'Untitled')}")
-                st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')),
-                            unsafe_allow_html=True)
-                st.caption(f"👤 {entry.get('display_name', 'Unknown')}")
-                if entry.get('tags'):
-                    tl = entry['tags'].split(',') if isinstance(entry['tags'], str) else entry['tags']
-                    st.markdown(UIComponents.tag_badges(tl, 3), unsafe_allow_html=True)
+                st.markdown(f"### {entry.get('caption','Untitled')}")
+                st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')), unsafe_allow_html=True)
+                st.caption(f"👤 {entry.get('display_name','')}")
             with c3:
                 if entry.get('avg_rating'):
                     st.markdown(UIComponents.rating_stars(entry['avg_rating']), unsafe_allow_html=True)
-                if is_vid and entry.get('duration'):
-                    m, s = int(entry['duration'] // 60), int(entry['duration'] % 60)
-                    st.caption(f"⏱️ {m:02d}:{s:02d}")
-                if st.button("View Details", key=f"vdet_{entry['entry_id']}", use_container_width=True):
+                if st.button("View", key=f"glv_{entry['entry_id']}", use_container_width=True):
                     st.session_state['selected_media'] = entry['entry_id']
-                    st.session_state['current_page'] = 'media_detail'
-                    st.rerun()
+                    st.session_state['current_page'] = 'media_detail'; st.rerun()
 
-    # ── MEDIA DETAIL PAGE (luxury frame) ──────────────────────────────
+    # ── MEDIA DETAIL (HD + Frame) ────────────────────────────────────
     def render_media_detail_page(self):
-        entry_id = st.session_state.get('selected_media')
-        if not entry_id:
+        eid = st.session_state.get('selected_media')
+        if not eid:
             st.error("No media selected")
             if st.button("Back"): st.session_state['current_page'] = 'gallery'; st.rerun()
             return
-
-        entry = self.manager.get_entry_with_details(entry_id)
+        entry = self.mgr.get_entry_with_details(eid)
         if not entry:
-            st.error("Media not found")
+            st.error("Not found")
             if st.button("Back"): st.session_state['current_page'] = 'gallery'; st.rerun()
             return
 
@@ -2151,567 +1613,322 @@ class PhotoVideoAlbumApp:
                            (entry.get('caption', 'Detail'), "media_detail")])
 
         if st.button("← Back"):
-            st.session_state['current_page'] = 'gallery'
-            st.rerun()
+            st.session_state['current_page'] = st.session_state.get('slider_page', 'gallery'); st.rerun()
 
         c1, c2 = st.columns([2, 1])
-
         with c1:
             if entry.get('media_type') == MediaType.IMAGE.value:
                 if entry.get('media_data_url'):
-                    # ── Luxury framed display ──────────────────────────
-                    st.markdown(
-                        FrameRenderer.wrap_detail(entry['media_data_url'], self.frame_style),
-                        unsafe_allow_html=True)
+                    st.markdown(FrameRenderer.wrap_detail(entry['media_data_url'], self.fs), unsafe_allow_html=True)
 
-                    # Fullscreen & download row
+                    # Slider entry: navigate through all images for this person
                     fc1, fc2, fc3 = st.columns([1, 1, 1])
                     with fc1:
-                        if st.button("🔍 Full Screen", use_container_width=True):
-                            st.session_state['fullscreen_media'] = entry['media_data_url']
-                            st.rerun()
+                        if st.button("🔍 Full Screen"):
+                            st.session_state['fullscreen_media'] = entry['media_data_url']; st.rerun()
                     with fc2:
-                        if entry.get('filepath'):
-                            mp = Config.DATA_DIR / entry['filepath']
+                        if entry.get('media_path'):
+                            mp = Path(entry['media_path'])
                             if mp.exists():
                                 with open(mp, 'rb') as f:
-                                    st.download_button("💾 Download", data=f.read(),
+                                    st.download_button("💾 Download HD", data=f.read(),
                                                        file_name=mp.name, use_container_width=True)
                     with fc3:
-                        pass  # placeholder for future actions
+                        # Open slider from detail
+                        pid = entry.get('person_id')
+                        all_e = self.mgr.db.get_all_entries_with_details(pid, 'image')
+                        img_entries = [e for e in all_e if e.get('media_type') == MediaType.IMAGE.value]
+                        if len(img_entries) > 1:
+                            cur = next((i for i, e in enumerate(img_entries) if e['entry_id'] == eid), 0)
+                            if st.button("🎞️ Slideshow", use_container_width=True):
+                                st.session_state['slider_entries'] = img_entries
+                                st.session_state['slider_index'] = cur
+                                st.session_state['slider_page'] = 'media_detail'
+                                st.session_state['current_page'] = 'gallery'
+                                st.session_state['view_mode_override'] = 'Slider'
+                                st.rerun()
                 else:
-                    st.error("Image not available")
+                    st.error("Image unavailable")
             elif entry.get('media_type') == MediaType.VIDEO.value:
                 st.subheader("🎬 Video Player")
                 if entry.get('media_path'):
-                    self.manager.stream_video(entry['media_path'])
-                    vi = self.manager.media_processor.get_video_info(Path(entry['media_path']))
+                    self.mgr.stream_video(entry['media_path'])
+                    vi = self.mgr.mp.get_video_info(Path(entry['media_path']))
                     va, vb, vc = st.columns(3)
                     with va:
                         m, s = int(vi['duration'] // 60), int(vi['duration'] % 60)
                         st.metric("Duration", f"{m}:{s:02d}")
-                    with vb:
-                        st.metric("Resolution", f"{vi['dimensions'][0]}×{vi['dimensions'][1]}")
-                    with vc:
-                        st.metric("Frame Rate", f"{vi['frame_rate']:.1f} fps")
+                    with vb: st.metric("Resolution", f"{vi['dimensions'][0]}×{vi['dimensions'][1]}")
+                    with vc: st.metric("FPS", f"{vi['frame_rate']:.1f}")
 
         with c2:
             st.title(entry.get('caption', 'Untitled'))
-            st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')),
-                        unsafe_allow_html=True)
-            st.markdown(f"👤 **{entry.get('display_name', 'Unknown')}**")
-
-            avg = entry.get('avg_rating', 0)
-            rc = entry.get('rating_count', 0)
+            st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')), unsafe_allow_html=True)
+            st.markdown(f"👤 **{entry.get('display_name','')}**")
+            avg = entry.get('avg_rating', 0); rc = entry.get('rating_count', 0)
             st.markdown(UIComponents.rating_stars(avg), unsafe_allow_html=True)
             st.caption(f"{rc} ratings")
-
-            st.subheader("Your Rating")
+            st.subheader("Rate")
             rcols = st.columns(5)
             for i in range(1, 6):
                 with rcols[i - 1]:
-                    if st.button(f"{i}⭐", key=f"rate_{i}", use_container_width=True):
-                        self.manager.add_rating_to_entry(entry_id, i); st.rerun()
-
+                    if st.button(f"{i}⭐", key=f"r{i}", use_container_width=True):
+                        self.mgr.add_rating_to_entry(eid, i); st.rerun()
             if entry.get('is_favorited'):
-                if st.button("⭐ Remove Favorite", use_container_width=True):
-                    self.manager.remove_from_favorites(entry_id); st.rerun()
+                if st.button("⭐ Unfavorite", use_container_width=True):
+                    self.mgr.remove_from_favorites(eid); st.rerun()
             else:
-                if st.button("☆ Add Favorite", use_container_width=True):
-                    self.manager.add_to_favorites(entry_id); st.rerun()
+                if st.button("☆ Favorite", use_container_width=True):
+                    self.mgr.add_to_favorites(eid); st.rerun()
 
-            with st.expander("📊 Metadata"):
-                for label, val in [
-                    ("Description", entry.get('description')),
-                    ("Location", entry.get('location')),
-                    ("Date Taken", entry.get('date_taken')),
-                    ("File Size", f"{entry['file_size']/(1024*1024):.2f} MB" if entry.get('file_size') else None),
-                    ("Format", entry.get('format')),
-                    ("Dimensions", f"{entry['width']}×{entry['height']}" if entry.get('width') else None),
-                ]:
-                    if val:
-                        st.markdown(f"**{label}:** {val}")
+            with st.expander("📊 Info"):
+                for lbl, val in [("Description", entry.get('description')), ("Location", entry.get('location')),
+                                 ("Date", entry.get('date_taken')),
+                                 ("Size", f"{entry['file_size']/(1024*1024):.2f}MB" if entry.get('file_size') else None),
+                                 ("Format", entry.get('format')),
+                                 ("Dims", f"{entry['width']}×{entry['height']}" if entry.get('width') else None)]:
+                    if val: st.markdown(f"**{lbl}:** {val}")
                 if entry.get('tags'):
-                    st.markdown("**Tags:**")
                     st.markdown(UIComponents.tag_badges(
                         entry['tags'] if isinstance(entry['tags'], list) else entry['tags'].split(','), 10),
                         unsafe_allow_html=True)
-                if entry.get('media_type') == MediaType.VIDEO.value and entry.get('duration'):
-                    m, s = int(entry['duration'] // 60), int(entry['duration'] % 60)
-                    st.markdown(f"**Duration:** {m:02d}:{s:02d}")
-                if entry.get('frame_rate'):
-                    st.markdown(f"**Frame Rate:** {entry['frame_rate']:.1f} fps")
 
         # Fullscreen overlay
         if st.session_state.get('fullscreen_media'):
-            st.markdown(f"""
-            <div class="fullscreen-overlay" onclick="this.style.display='none'">
-                <img src="{st.session_state['fullscreen_media']}">
-            </div>
-            <script>
-            setTimeout(function() {{
-                document.querySelector('.fullscreen-overlay').addEventListener('click', function() {{
-                    this.style.display = 'none';
-                }});
-            }}, 100);
-            </script>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="fullscreen-overlay" onclick="this.style.display='none'">
+                <img src="{st.session_state['fullscreen_media']}"></div>""", unsafe_allow_html=True)
             if st.button("✖ Close Full Screen"):
-                st.session_state['fullscreen_media'] = None
-                st.rerun()
+                st.session_state['fullscreen_media'] = None; st.rerun()
 
         # Comments
         st.divider()
         st.subheader("💬 Comments")
-        with st.form("add_comment_form"):
-            ct = st.text_area("Add a comment…", height=100, max_chars=Config.MAX_COMMENT_LENGTH)
-            if st.form_submit_button("Post Comment") and ct.strip():
-                if self.manager.add_comment_to_entry(entry_id, ct.strip()):
-                    st.rerun()
-        for comment in entry.get('comments', []):
+        with st.form("cmt_form"):
+            ct = st.text_area("Comment…", height=100, max_chars=Config.MAX_COMMENT_LENGTH)
+            if st.form_submit_button("Post") and ct.strip():
+                if self.mgr.add_comment_to_entry(eid, ct.strip()): st.rerun()
+        for c in entry.get('comments', []):
             with st.container(border=True):
                 ca, cb = st.columns([1, 4])
-                with ca:
-                    st.markdown(f"**{comment.get('username', 'Anonymous')}**")
-                    st.caption(comment.get('created_at', ''))
-                with cb:
-                    st.markdown(comment.get('content', ''))
+                with ca: st.markdown(f"**{c.get('username','Anon')}**"); st.caption(c.get('created_at', ''))
+                with cb: st.markdown(c.get('content', ''))
 
     # ── VIDEOS PAGE ───────────────────────────────────────────────────
     def render_videos_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("🎬 Videos", "videos")])
         st.title("🎬 Video Library")
-        videos = self.manager.db.get_media_by_type(MediaType.VIDEO.value)
-        if not videos:
-            st.info("No videos found. Add some to person folders and scan.")
-            return
+        vids = self.mgr.db.get_media_by_type(MediaType.VIDEO.value)
+        if not vids: st.info("No videos found."); return
         c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Total Videos", len(videos))
+        with c1: st.metric("Videos", len(vids))
         with c2:
-            td = sum(v.get('duration', 0) for v in videos)
-            st.metric("Total Duration", f"{int(td//3600)}h {int((td%3600)//60)}m")
+            td = sum(v.get('duration', 0) for v in vids)
+            st.metric("Duration", f"{int(td//3600)}h{int((td%3600)//60)}m")
         with c3:
-            ad = td / len(videos) if videos else 0
-            st.metric("Avg Duration", f"{int(ad//60)}:{int(ad%60):02d}")
-        with c4:
-            ts = sum(v.get('file_size', 0) for v in videos) / (1024 * 1024)
-            st.metric("Total Size", f"{ts:.1f} MB")
+            ad = td / len(vids) if vids else 0
+            st.metric("Avg", f"{int(ad//60)}:{int(ad%60):02d}")
+        with c4: st.metric("Size", f"{sum(v.get('file_size',0) for v in vids)/(1024*1024):.1f}MB")
         st.divider()
         cols = st.columns(4)
-        for idx, video in enumerate(videos):
+        for idx, v in enumerate(vids):
             with cols[idx % 4]:
                 with st.container(border=True):
-                    if video.get('video_thumbnail_path'):
-                        tp = Path(video['video_thumbnail_path'])
+                    if v.get('video_thumbnail_path'):
+                        tp = Path(v['video_thumbnail_path'])
                         if tp.exists():
-                            du = self.manager.media_processor.get_media_data_url(tp)
-                            st.markdown(FrameRenderer.wrap_thumbnail(du, '', self.frame_style, True, video.get('duration')),
+                            du = self.mgr.mp.get_media_data_url(tp)
+                            st.markdown(FrameRenderer.wrap_thumbnail(du, '', self.fs, True, v.get('duration')),
                                         unsafe_allow_html=True)
-                    st.markdown(f"**{video.get('filename', 'Untitled')}**")
-                    if video.get('duration'):
-                        m, s = int(video['duration'] // 60), int(video['duration'] % 60)
+                    st.markdown(f"**{v.get('filename','')}**")
+                    if v.get('duration'):
+                        m, s = int(v['duration'] // 60), int(v['duration'] % 60)
                         st.caption(f"⏱️ {m:02d}:{s:02d}")
-                    if video.get('file_size'):
-                        st.caption(f"📦 {video['file_size']/(1024*1024):.1f} MB")
-                    with sqlite3.connect(self.manager.db.db_path) as conn:
-                        c = conn.cursor()
-                        c.execute('SELECT entry_id FROM album_entries WHERE media_id=?', (video['media_id'],))
-                        row = c.fetchone()
-                    if row and st.button("Play", key=f"play_{video['media_id']}", use_container_width=True):
-                        st.session_state['selected_media'] = row[0]
-                        st.session_state['current_page'] = 'media_detail'
-                        st.rerun()
+                    with sqlite3.connect(self.mgr.db.db_path) as conn:
+                        r = conn.execute('SELECT entry_id FROM album_entries WHERE media_id=?', (v['media_id'],)).fetchone()
+                    if r and st.button("Play", key=f"vp_{v['media_id']}", use_container_width=True):
+                        st.session_state['selected_media'] = r[0]
+                        st.session_state['current_page'] = 'media_detail'; st.rerun()
 
     # ── PHOTOS PAGE ───────────────────────────────────────────────────
     def render_photos_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("📸 Photos", "photos")])
         st.title("📸 Photo Library")
-        images = self.manager.db.get_media_by_type(MediaType.IMAGE.value)
-        if not images:
-            st.info("No photos found. Add some to person folders and scan.")
-            return
+        imgs = self.mgr.db.get_media_by_type(MediaType.IMAGE.value)
+        if not imgs: st.info("No photos found."); return
         c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Total Photos", len(images))
-        with c2:
-            ts = sum(i.get('file_size', 0) for i in images) / (1024 * 1024)
-            st.metric("Total Size", f"{ts:.1f} MB")
-        with c3:
-            st.metric("Avg Size", f"{ts/len(images):.1f} MB" if images else "0")
+        with c1: st.metric("Photos", len(imgs))
+        with c2: st.metric("Size", f"{sum(i.get('file_size',0) for i in imgs)/(1024*1024):.1f}MB")
+        with c3: st.metric("Avg", f"{sum(i.get('file_size',0) for i in imgs)/(1024*1024*len(imgs)):.1f}MB" if imgs else "0")
         st.divider()
         cols = st.columns(4)
-        for idx, image in enumerate(images):
+        for idx, img in enumerate(imgs):
             with cols[idx % 4]:
                 with st.container(border=True):
-                    if image.get('thumbnail_path'):
-                        tp = Path(image['thumbnail_path'])
+                    if img.get('thumbnail_path'):
+                        tp = Path(img['thumbnail_path'])
                         if tp.exists():
-                            du = self.manager.media_processor.get_media_data_url(tp)
-                            st.markdown(FrameRenderer.wrap_thumbnail(du, image.get('filename', ''),
-                                                                      self.frame_style, False),
+                            du = self.mgr.mp.get_media_data_url(tp)
+                            st.markdown(FrameRenderer.wrap_thumbnail(du, img.get('filename', ''), self.fs),
                                         unsafe_allow_html=True)
-                    st.markdown(f"**{image.get('filename', 'Untitled')}**")
-                    if image.get('width') and image.get('height'):
-                        st.caption(f"📐 {image['width']}×{image['height']}")
-                    with sqlite3.connect(self.manager.db.db_path) as conn:
-                        c = conn.cursor()
-                        c.execute('SELECT entry_id FROM album_entries WHERE media_id=?', (image['media_id'],))
-                        row = c.fetchone()
-                    if row and st.button("View", key=f"vp_{image['media_id']}", use_container_width=True):
-                        st.session_state['selected_media'] = row[0]
-                        st.session_state['current_page'] = 'media_detail'
-                        st.rerun()
+                    st.markdown(f"**{img.get('filename','')}**")
+                    if img.get('width'): st.caption(f"📐 {img['width']}×{img['height']}")
+                    with sqlite3.connect(self.mgr.db.db_path) as conn:
+                        r = conn.execute('SELECT entry_id FROM album_entries WHERE media_id=?', (img['media_id'],)).fetchone()
+                    if r and st.button("View", key=f"ppv_{img['media_id']}", use_container_width=True):
+                        st.session_state['selected_media'] = r[0]
+                        st.session_state['current_page'] = 'media_detail'; st.rerun()
 
-    # ── FAVORITES PAGE ────────────────────────────────────────────────
+    # ── FAVORITES ─────────────────────────────────────────────────────
     def render_favorites_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("⭐ Favorites", "favorites")])
         st.title("⭐ Favorites")
-        favs = self.manager.get_user_favorites()
-        if not favs:
-            st.info("No favorites yet. Browse the gallery and click ☆ to add!")
-            return
+        favs = self.mgr.get_user_favorites()
+        if not favs: st.info("No favorites yet."); return
         cols = st.columns(4)
-        for idx, entry in enumerate(favs):
-            with cols[idx % 4]:
-                self._render_gallery_item(entry)
+        for idx, e in enumerate(favs):
+            with cols[idx % 4]: self._render_gallery_item(e)
 
-    # ── SEARCH PAGE ───────────────────────────────────────────────────
+    # ── SEARCH ────────────────────────────────────────────────────────
     def render_search_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("🔍 Search", "search")])
         st.title("🔍 Search")
         c1, c2 = st.columns([3, 1])
-        with c1: sq = st.text_input("Search term", key="global_search")
-        with c2: si = st.selectbox("Search in", ["All Fields", "Captions", "Descriptions", "Tags", "People"])
-
+        with c1: sq = st.text_input("Search", key="gsearch2")
+        with c2: si = st.selectbox("In", ["All", "Captions", "Tags", "People"])
         if sq:
-            with st.spinner("Searching…"):
-                results = []
-                if si in ["All Fields", "Captions", "Descriptions", "Tags"]:
-                    results.extend(self.manager.db.search_entries(sq))
-                if si in ["All Fields", "People"]:
-                    for person in self.manager.db.get_all_people():
-                        if sq.lower() in person['display_name'].lower():
-                            with sqlite3.connect(self.manager.db.db_path) as conn:
-                                conn.row_factory = sqlite3.Row
-                                c = conn.cursor()
-                                c.execute('''SELECT ae.*, p.display_name, m.filename, m.media_type,
-                                             m.thumbnail_path, m.video_thumbnail_path
-                                             FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
-                                             JOIN media m ON ae.media_id=m.media_id
-                                             WHERE ae.person_id=? LIMIT 5''', (person['person_id'],))
-                                results.extend(dict(row) for row in c.fetchall())
-                seen = set()
-                unique = []
-                for r in results:
-                    if r['entry_id'] not in seen:
-                        seen.add(r['entry_id'])
-                        unique.append(r)
-                st.subheader(f"Found {len(unique)} results")
-                for e in unique:
-                    self._render_gallery_item_list(e)
+            results = self.mgr.db.search_entries(sq)
+            if si == "People":
+                for p in self.mgr.db.get_all_people():
+                    if sq.lower() in p['display_name'].lower():
+                        results.extend(self.mgr.db.get_all_entries_with_details(p['person_id']))
+            seen = set(); unique = []
+            for r in results:
+                if r['entry_id'] not in seen: seen.add(r['entry_id']); unique.append(r)
+            st.subheader(f"{len(unique)} results")
+            for e in unique: self._render_gallery_item_list(e)
         else:
             st.info("Enter a search term")
 
-    # ── STATISTICS PAGE ───────────────────────────────────────────────
+    # ── STATISTICS ────────────────────────────────────────────────────
     def render_statistics_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("📊 Statistics", "statistics")])
         st.title("📊 Statistics")
-        all_people = self.manager.get_all_people_with_stats()
-        if not all_people:
-            st.info("No data. Scan directory first.")
-            return
-        tm = sum(p['media_count'] for p in all_people)
-        ti = sum(p['image_count'] for p in all_people)
-        tv = sum(p['video_count'] for p in all_people)
-        tc = sum(p['comment_count'] for p in all_people)
-        ars = [p['avg_rating'] for p in all_people if p['avg_rating'] > 0]
-        ar = sum(ars) / len(ars) if ars else 0
-
+        ap = self.mgr.get_all_people_with_stats()
+        if not ap: st.info("No data."); return
+        tm = sum(p['media_count'] for p in ap)
+        ti = sum(p['image_count'] for p in ap)
+        tv = sum(p['video_count'] for p in ap)
         c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Total People", len(all_people))
-        with c2: st.metric("Total Media", tm)
-        with c3: st.metric("Total Comments", tc)
-        with c4: st.metric("Avg Rating", f"{ar:.1f}")
-
+        with c1: st.metric("People", len(ap))
+        with c2: st.metric("Media", tm)
+        with c3: st.metric("Comments", sum(p['comment_count'] for p in ap))
+        ars = [p['avg_rating'] for p in ap if p['avg_rating'] > 0]
+        with c4: st.metric("Avg Rating", f"{sum(ars)/len(ars):.1f}" if ars else "N/A")
         st.divider()
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("📊 Media Distribution")
+            st.subheader("Distribution")
             st.bar_chart(pd.DataFrame({'Type': ['Images', 'Videos'], 'Count': [ti, tv]}).set_index('Type'))
         with c2:
-            st.subheader("👥 Media per Person")
-            st.bar_chart(pd.DataFrame({
-                'Person': [p['display_name'] for p in all_people],
-                'Media': [p['media_count'] for p in all_people]
-            }).set_index('Person'))
-
+            st.subheader("Per Person")
+            st.bar_chart(pd.DataFrame({'Person': [p['display_name'] for p in ap],
+                                       'Media': [p['media_count'] for p in ap]}).set_index('Person'))
         st.divider()
-        st.subheader("👥 People Details")
-        td = [{'Name': p['display_name'], 'Total': p['media_count'],
-               'Images': p['image_count'], 'Videos': p['video_count'],
-               'Comments': p['comment_count'], 'Avg Rating': f"{p['avg_rating']:.1f}",
-               'Last Activity': p.get('last_activity', 'Never')} for p in all_people]
-        df = pd.DataFrame(td)
+        df = pd.DataFrame([{'Name': p['display_name'], 'Total': p['media_count'],
+                             'Img': p['image_count'], 'Vid': p['video_count'],
+                             'Rating': f"{p['avg_rating']:.1f}"} for p in ap])
         st.dataframe(df, use_container_width=True)
-        if st.button("📊 Export CSV"):
-            st.download_button("Download", df.to_csv(index=False),
-                               "album_stats.csv", "text/csv")
+        if st.button("Export CSV"):
+            st.download_button("Download", df.to_csv(index=False), "stats.csv", "text/csv")
 
-    # ── SETTINGS PAGE ─────────────────────────────────────────────────
+    # ── SETTINGS ──────────────────────────────────────────────────────
     def render_settings_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("⚙️ Settings", "settings")])
         st.title("⚙️ Settings")
-        tabs = st.tabs(["Application", "User", "Database", "Advanced"])
-
+        tabs = st.tabs(["App", "User", "DB", "Advanced"])
         with tabs[0]:
-            st.subheader("Application Settings")
-            with st.expander("🖼️ Frame Style"):
-                fs = st.selectbox("Choose frame style", Config.FRAME_STYLES,
-                                  index=Config.FRAME_STYLES.index(self.frame_style))
-                if st.button("Apply Frame Style"):
-                    st.session_state['frame_style'] = fs
-                    st.success("Frame style updated!")
-                    st.rerun()
-            with st.expander("📁 Directory Settings"):
-                for label, path in [("Data", Config.DATA_DIR), ("Thumbnails", Config.THUMBNAIL_DIR),
-                                    ("Video Thumbnails", Config.VIDEO_THUMBNAIL_DIR),
-                                    ("Database", Config.DB_DIR)]:
-                    st.info(f"**{label}:** {path}")
-                if st.button("Create Missing Directories"):
-                    Config.init_directories(); st.success("Done!")
-            with st.expander("🖼️ Image Settings"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    nt = st.number_input("Thumbnail Width", value=Config.THUMBNAIL_SIZE[0], min_value=100, max_value=800)
-                    Config.THUMBNAIL_SIZE = (int(nt), int(nt))
-                with c2:
-                    np_ = st.number_input("Preview Width", value=Config.PREVIEW_SIZE[0], min_value=400, max_value=1200)
-                    Config.PREVIEW_SIZE = (int(np_), int(np_))
-                if st.button("Apply"):
-                    st.success("Updated!")
-            with st.expander("🎬 Video Settings"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    nvt = st.number_input("Video Thumb Width", value=Config.VIDEO_THUMBNAIL_SIZE[0], min_value=100, max_value=800)
-                    Config.VIDEO_THUMBNAIL_SIZE = (int(nvt), int(nvt))
-                with c2:
-                    mvs = st.number_input("Max Video MB", value=Config.MAX_VIDEO_SIZE // (1024 * 1024), min_value=10, max_value=500)
-                    Config.MAX_VIDEO_SIZE = int(mvs) * 1024 * 1024
-                if st.button("Apply Video Settings"):
-                    st.success("Updated!")
-
+            st.subheader("Frame Style")
+            fs = st.selectbox("Frame", Config.FRAME_STYLES, index=Config.FRAME_STYLES.index(self.fs))
+            if st.button("Apply Frame"):
+                st.session_state['frame_style'] = fs; st.success("Updated!"); st.rerun()
+            with st.expander("Directories"):
+                for l, p in [("Data", Config.DATA_DIR), ("Thumbs", Config.THUMBNAIL_DIR),
+                             ("DB", Config.DB_DIR)]: st.info(f"**{l}:** {p}")
+                if st.button("Create Dirs"): Config.init_directories(); st.success("Done!")
         with tabs[1]:
-            st.subheader("User Settings")
             nu = st.text_input("Username", value=st.session_state['username'])
             nr = st.selectbox("Role", [r.value for r in UserRoles],
                               index=[r.value for r in UserRoles].index(st.session_state['user_role']))
             if st.button("Update User"):
-                st.session_state['username'] = nu
-                st.session_state['user_role'] = nr
-                st.success("Updated!")
-
+                st.session_state['username'] = nu; st.session_state['user_role'] = nr; st.success("Updated!")
         with tabs[2]:
-            st.subheader("Database Management")
+            if st.button("Rebuild DB"): self.mgr.db._init_database(); st.success("Done!")
+            if st.button("Optimize"):
+                with self.mgr.db.get_connection() as conn:
+                    conn.execute("VACUUM"); conn.execute("ANALYZE")
+                st.success("Optimized!")
+            if st.button("Clear All Data"):
+                if st.checkbox("Delete everything"):
+                    if self.mgr.db.db_path.exists(): os.remove(self.mgr.db.db_path)
+                    self.mgr.db = DatabaseManager(); self.mgr.cache.clear(); st.success("Cleared!"); st.rerun()
+        with tabs[3]:
+            st.info(f"Cache: {len(self.mgr.cache._cache)} | Video: {len(self.mgr.cache._vc)}")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("🔄 Rebuild Database"):
-                    self.manager.db._init_database(); st.success("Rebuilt!")
-                if st.button("📊 Optimize"):
-                    with self.manager.db.get_connection() as conn:
-                        conn.execute("VACUUM"); conn.execute("ANALYZE")
-                    st.success("Optimized!")
+                if st.button("Clear Cache"): self.mgr.cache.clear(); st.success("Done!")
             with c2:
-                if st.button("🗑️ Clear All Data"):
-                    if st.checkbox("I understand this deletes ALL data"):
-                        try:
-                            if self.manager.db.db_path.exists():
-                                os.remove(self.manager.db.db_path)
-                            self.manager.db = DatabaseManager()
-                            self.manager.cache.clear()
-                            st.success("Cleared!"); st.rerun()
-                        except Exception as e:
-                            st.error(str(e))
-                dbs = self.manager.db.db_path.stat().st_size if self.manager.db.db_path.exists() else 0
-                st.info(f"**DB Size:** {dbs/(1024*1024):.2f} MB")
+                if st.button("Clear Video Cache"): self.mgr.cache.clear_video_cache(); st.success("Done!")
+            if st.button("Session State"): st.write(st.session_state)
 
-        with tabs[3]:
-            st.subheader("Advanced")
-            with st.expander("💾 Cache"):
-                st.info(f"Cache items: {len(self.manager.cache._cache)} | Video cache: {len(self.manager.cache._video_cache)}")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Clear All Cache"):
-                        self.manager.cache.clear(); st.success("Cleared!")
-                with c2:
-                    if st.button("Clear Video Cache"):
-                        self.manager.cache.clear_video_cache(); st.success("Cleared!")
-            with st.expander("🐛 Debug"):
-                if st.button("Show Session State"):
-                    st.write(st.session_state)
-                if st.button("Show Config"):
-                    st.write({k: str(v) for k, v in vars(Config).items() if not k.startswith('_')})
-
-    # ── IMPORT/EXPORT PAGE ────────────────────────────────────────────
+    # ── IMPORT/EXPORT ─────────────────────────────────────────────────
     def render_import_export_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("📤 Import/Export", "import_export")])
         st.title("📤 Import/Export")
         tabs = st.tabs(["Export", "Import", "Backup"])
-
         with tabs[0]:
-            st.subheader("Export Data")
-            ef = st.selectbox("Format", ["CSV", "JSON", "Excel"], key="export_format")
-            ep = st.multiselect("People", [p['display_name'] for p in self.manager.db.get_all_people()])
-            mt = st.multiselect("Media Types", ["Image", "Video"], default=["Image", "Video"])
-            if st.button("Generate Export", type="primary"):
-                with st.spinner("Generating…"):
-                    try:
-                        with sqlite3.connect(self.manager.db.db_path) as conn:
-                            conds, params = [], []
-                            if ep:
-                                params.extend(ep)
-                                conds.append(f"p.display_name IN ({','.join(['?']*len(ep))})")
-                            if mt:
-                                params.extend([m.lower() for m in mt])
-                                conds.append(f"m.media_type IN ({','.join(['?']*len(mt))})")
-                            where = " AND ".join(conds) if conds else "1=1"
-                            df = pd.read_sql_query(f'''SELECT ae.caption, ae.description, ae.location,
-                                                       ae.tags, p.display_name as person_name,
-                                                       m.filename, m.media_type, m.file_size, m.format,
-                                                       m.duration, m.width, m.height
-                                                       FROM album_entries ae
-                                                       JOIN people p ON ae.person_id=p.person_id
-                                                       JOIN media m ON ae.media_id=m.media_id
-                                                       WHERE {where} ORDER BY ae.created_at DESC''', conn, params=params)
-                            buf = io.BytesIO()
-                            ext = ef.lower()
-                            if ext == 'csv':
-                                buf.write(df.to_csv(index=False).encode())
-                            elif ext == 'json':
-                                buf.write(df.to_json(orient='records', indent=2).encode())
-                            elif ext == 'excel':
-                                with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                                    df.to_excel(w, index=False)
-                                ext = 'xlsx'
-                            st.download_button(f"Download {ef}", buf.getvalue(),
-                                               f"album_export_{datetime.datetime.now():%Y%m%d_%H%M%S}.{ext}",
-                                               {"csv": "text/csv", "json": "application/json",
-                                                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}[ext])
-                    except Exception as e:
-                        st.error(str(e))
-
+            ef = st.selectbox("Format", ["CSV", "JSON", "Excel"], key="ef")
+            if st.button("Export", type="primary"):
+                with sqlite3.connect(self.mgr.db.db_path) as conn:
+                    df = pd.read_sql_query('''SELECT ae.caption,ae.description,ae.location,ae.tags,
+                        p.display_name as person,m.filename,m.media_type,m.file_size,m.format
+                        FROM album_entries ae JOIN people p ON ae.person_id=p.person_id
+                        JOIN media m ON ae.media_id=m.media_id ORDER BY ae.created_at DESC''', conn)
+                    buf = io.BytesIO(); ext = ef.lower()
+                    if ext == 'csv': buf.write(df.to_csv(index=False).encode())
+                    elif ext == 'json': buf.write(df.to_json(orient='records', indent=2).encode())
+                    else:
+                        with pd.ExcelWriter(buf, engine='openpyxl') as w: df.to_excel(w, index=False)
+                        ext = 'xlsx'
+                    st.download_button("Download", buf.getvalue(),
+                                       f"export_{datetime.datetime.now():%Y%m%d}.{ext}")
         with tabs[1]:
-            st.subheader("Import Data")
-            st.info("CSV/JSON/Excel with columns: caption, person_name, filename, media_type")
-            uf = st.file_uploader("Choose file", type=['csv', 'json', 'xlsx'], key="import_file")
-            if uf and st.button("Import", type="primary"):
-                with st.spinner("Importing…"):
-                    try:
-                        ext = uf.name.split('.')[-1].lower()
-                        if ext == 'csv': df = pd.read_csv(io.BytesIO(uf.getvalue()))
-                        elif ext == 'json': df = pd.read_json(io.BytesIO(uf.getvalue()))
-                        else: df = pd.read_excel(io.BytesIO(uf.getvalue()))
-                        req = ['caption', 'person_name', 'filename', 'media_type']
-                        miss = [c for c in req if c not in df.columns]
-                        if miss:
-                            st.error(f"Missing columns: {miss}")
-                        else:
-                            ok = err = 0
-                            for _, row in df.iterrows():
-                                try:
-                                    fn = row['person_name'].lower().replace(' ', '-')
-                                    ep2 = self.manager.db.get_person_by_folder(fn)
-                                    if not ep2:
-                                        pp = PersonProfile(person_id=str(uuid.uuid4()), folder_name=fn,
-                                                           display_name=row['person_name'],
-                                                           bio=f"Photos of {row['person_name']}",
-                                                           birth_date=None, relationship="Other",
-                                                           contact_info="", social_links={},
-                                                           profile_image=None, created_at=datetime.datetime.now())
-                                        self.manager.db.add_person(pp)
-                                        pid = pp.person_id
-                                    else:
-                                        pid = ep2['person_id']
-                                    mp = Config.DATA_DIR / fn / row['filename']
-                                    if not mp.exists():
-                                        err += 1; continue
-                                    meta = MediaMetadata.from_file(mp)
-                                    th = vth = None
-                                    if meta.media_type == MediaType.IMAGE.value:
-                                        th = self.manager.media_processor.create_thumbnail(mp)
-                                    else:
-                                        vth = self.manager.media_processor.create_thumbnail(mp)
-                                    self.manager.db.add_media(meta, str(th) if th else None, str(vth) if vth else None)
-                                    tags = [t.strip() for t in row['tags'].split(',') if t.strip()] if pd.notna(row.get('tags')) else []
-                                    ae = AlbumEntry(entry_id=str(uuid.uuid4()), media_id=meta.media_id,
-                                                    person_id=pid, caption=row['caption'],
-                                                    description=row.get('description', ''),
-                                                    location=row.get('location', ''),
-                                                    date_taken=row.get('date_taken'),
-                                                    tags=tags, privacy_level=row.get('privacy_level', 'public'),
-                                                    created_by=st.session_state['username'],
-                                                    created_at=datetime.datetime.now(),
-                                                    updated_at=datetime.datetime.now())
-                                    self.manager.db.add_album_entry(ae)
-                                    ok += 1
-                                except Exception:
-                                    err += 1
-                            self.manager.cache.clear()
-                            st.success(f"Imported: {ok} OK, {err} failed")
-                            if ok: st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
-
+            uf = st.file_uploader("File", type=['csv', 'json', 'xlsx'], key="imp")
+            if uf and st.button("Import"):
+                st.info("Import functionality — add media files to person folders and scan.")
         with tabs[2]:
-            st.subheader("Backup & Restore")
-            c1, c2 = st.columns(2)
-            with c1:
-                bn = st.text_input("Backup Name", value=f"backup_{datetime.datetime.now():%Y%m%d_%H%M%S}")
-                if st.button("🔒 Create Backup", use_container_width=True):
-                    try:
-                        import shutil
-                        bp = Config.EXPORT_DIR / f"{bn}.db"
-                        shutil.copy2(self.manager.db.db_path, bp)
-                        with open(bp, 'rb') as f:
-                            st.download_button("Download Backup", f.read(), bp.name, "application/x-sqlite3")
-                    except Exception as e:
-                        st.error(str(e))
-            with c2:
-                rf = st.file_uploader("Restore file", type=['db', 'sqlite', 'sqlite3'], key="restore_file")
-                if rf and st.checkbox("⚠️ Overwrite current data"):
-                    try:
-                        import shutil
-                        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                        shutil.copy2(self.manager.db.db_path, Config.EXPORT_DIR / f"pre_restore_{ts}.db")
-                        with open(self.manager.db.db_path, 'wb') as f:
-                            f.write(rf.getvalue())
-                        self.manager = AlbumManager()
-                        st.success("Restored!"); st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
+            if st.button("Create Backup"):
+                import shutil
+                bp = Config.EXPORT_DIR / f"backup_{datetime.datetime.now():%Y%m%d_%H%M%S}.db"
+                shutil.copy2(self.mgr.db.db_path, bp)
+                with open(bp, 'rb') as f:
+                    st.download_button("Download Backup", f.read(), bp.name, "application/x-sqlite3")
 
     # ── MAIN RENDERER ─────────────────────────────────────────────────
     def render_main(self):
         FrameRenderer.inject_global_css()
         self.render_sidebar()
         page = st.session_state.get('current_page', 'dashboard')
-        page_map = {
-            'dashboard': self.render_dashboard,
-            'people': self.render_people_page,
-            'gallery': self.render_gallery_page,
-            'media_detail': self.render_media_detail_page,
-            'videos': self.render_videos_page,
-            'photos': self.render_photos_page,
-            'favorites': self.render_favorites_page,
-            'search': self.render_search_page,
-            'statistics': self.render_statistics_page,
-            'settings': self.render_settings_page,
+        pages = {
+            'dashboard': self.render_dashboard, 'people': self.render_gallery_page,
+            'gallery': self.render_gallery_page, 'media_detail': self.render_media_detail_page,
+            'videos': self.render_videos_page, 'photos': self.render_photos_page,
+            'favorites': self.render_favorites_page, 'search': self.render_search_page,
+            'statistics': self.render_statistics_page, 'settings': self.render_settings_page,
             'import_export': self.render_import_export_page,
         }
-        page_map.get(page, self.render_dashboard)()
-
+        pages.get(page, self.render_dashboard)()
         st.divider()
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c2:
-            st.caption(f"© {datetime.datetime.now().year} {Config.APP_NAME} v{Config.VERSION}")
+        st.caption(f"© {datetime.datetime.now().year} {Config.APP_NAME} v{Config.VERSION}")
 
 
 # ============================================================================
@@ -2723,17 +1940,14 @@ def main():
     try:
         app = PhotoVideoAlbumApp()
         if not app.initialized:
-            st.error("Application failed to initialize.")
-            return
+            st.error("Init failed."); return
         if not VIDEO_SUPPORT:
-            st.warning("⚠️ Video libraries not installed. `pip install opencv-python moviepy`")
+            st.warning("⚠️ pip install opencv-python moviepy")
         app.render_main()
     except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        with st.expander("Error Details"):
-            st.exception(e)
-        if st.button("Try Again"):
-            st.rerun()
+        st.error(f"Error: {e}")
+        with st.expander("Details"): st.exception(e)
+        if st.button("Retry"): st.rerun()
 
 
 if __name__ == "__main__":
