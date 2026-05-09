@@ -1,14 +1,12 @@
 """
 COMPREHENSIVE WEB PHOTO & VIDEO ALBUM APPLICATION
-Version: 6.0.0 - Folder‑only Sidebar, Expanded View (no fullscreen issues)
-Features: Table of Contents, Image/Video Gallery, Comments, Ratings, Metadata,
-          Search, Numeric Password Auth, Luxury Photo Frames, Slideshow,
-          Breadcrumb Navigation, Download, Expanded View, Frame Style Selector,
-          Enhanced Media Viewer with Prev/Next & Thumbnail Strip
+Version: 6.0.0 - Scientific UI Arrangement, Clean Sidebar, Folder-Only Navigation
+Features: Directory-sidebar (folders only), HD Viewer, Prev/Next, Expanded View,
+          Comments, Ratings, Metadata, Search, Numeric Password, Frame Styles
 """
 import streamlit as st
 from pathlib import Path
-from PIL import Image, ImageOps, ExifTags, ImageDraw, ImageFilter
+from PIL import Image, ImageOps, ExifTags, ImageDraw
 import base64
 import json
 import datetime
@@ -18,16 +16,11 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 import hashlib
-import csv
 import io
 import time
 import math
 from dataclasses import dataclass, asdict
 from enum import Enum
-import random
-import string
-from collections import defaultdict
-import re
 import os
 from contextlib import contextmanager
 import mimetypes
@@ -35,7 +28,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================================
-# VIDEO PROCESSING IMPORTS
+# VIDEO PROCESSING (optional)
 # ============================================================================
 try:
     import cv2
@@ -99,7 +92,6 @@ def check_password():
             placeholder="Enter 8‑digit numeric code",
             label_visibility="collapsed"
         )
-
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("🔓 Unlock", use_container_width=True, type="primary"):
@@ -112,18 +104,16 @@ def check_password():
                 else:
                     st.error("❌ Invalid numeric key. Please try again.")
                     time.sleep(0.5)
-
         with col_b:
             if st.button("🔄 Reset", use_container_width=True):
                 st.session_state.authenticated = False
                 st.rerun()
-
         with st.expander("🔑 Need a hint?"):
             st.info("💡 The access key is a **numeric** code – 8 digits.")
             st.warning("🤔 Think of a personal 8‑digit number you’d never forget.")
             st.caption("Only digits 0‑9 are allowed. Letters will not work.")
-
     return False
+
 
 # ============================================================================
 # CONFIGURATION AND CONSTANTS
@@ -150,7 +140,6 @@ class Config:
     THUMB_STRIP_SIZE = (120, 90)
 
     MAX_IMAGE_SIZE = 10 * 1024 * 1024
-
     MAX_VIDEO_SIZE = 100 * 1024 * 1024
     VIDEO_THUMBNAIL_SIZE = (300, 300)
     VIDEO_PREVIEW_SIZE = (800, 450)
@@ -163,27 +152,16 @@ class Config:
     ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'} | set(SUPPORTED_VIDEO_FORMATS)
     MAX_COMMENT_LENGTH = 500
     MAX_CAPTION_LENGTH = 200
-
     CACHE_TTL = 3600
 
-    FRAME_STYLES = [
-        "Elegant Gold",
-        "Polaroid",
-        "Modern Shadow",
-        "Dark Museum",
-        "Vintage",
-        "Gallery White"
-    ]
+    FRAME_STYLES = ["Elegant Gold", "Polaroid", "Modern Shadow", "Dark Museum", "Vintage", "Gallery White"]
     DEFAULT_FRAME_STYLE = "Elegant Gold"
 
     @classmethod
     def init_directories(cls):
-        directories = [
-            cls.DATA_DIR, cls.THUMBNAIL_DIR, cls.VIDEO_THUMBNAIL_DIR,
-            cls.METADATA_DIR, cls.DB_DIR, cls.EXPORT_DIR, cls.VIDEO_CACHE_DIR
-        ]
-        for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
+        for d in [cls.DATA_DIR, cls.THUMBNAIL_DIR, cls.VIDEO_THUMBNAIL_DIR,
+                  cls.METADATA_DIR, cls.DB_DIR, cls.EXPORT_DIR, cls.VIDEO_CACHE_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
         if not any(cls.DATA_DIR.iterdir()):
             cls.create_sample_structure()
 
@@ -418,8 +396,6 @@ class FrameRenderer:
         .breadcrumb a { color:#667eea; text-decoration:none; }
         .breadcrumb a:hover { text-decoration:underline; }
         .breadcrumb .sep { color:#ccc; }
-        .thumb-strip-container { margin-top: 20px; padding: 8px 0; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
-        .thumb-strip { display: flex; gap: 8px; padding: 4px 2px; }
         .thumb-item { width: 90px; height: 68px; background: #1e1e2e; border-radius: 6px; overflow: hidden; position: relative; transition: transform 0.15s, opacity 0.15s; opacity: 0.6; cursor: pointer; flex-shrink: 0; }
         .thumb-item:hover { opacity: 1; transform: scale(1.05); }
         .thumb-item.active { opacity: 1; transform: scale(1.08); box-shadow: 0 0 0 2px #667eea; }
@@ -435,9 +411,6 @@ class FrameRenderer:
         """, unsafe_allow_html=True)
 
 
-# ============================================================================
-# BREADCRUMB HELPER
-# ============================================================================
 def render_breadcrumb(trail: List[Tuple[str, str]]):
     parts = []
     for i, (label, key) in enumerate(trail):
@@ -450,7 +423,7 @@ def render_breadcrumb(trail: List[Tuple[str, str]]):
 
 
 # ============================================================================
-# DATA MODELS (unchanged)
+# DATA MODELS (unchanged from previous full version – included for completeness)
 # ============================================================================
 @dataclass
 class MediaMetadata:
@@ -652,7 +625,7 @@ class PersonProfile:
 
 
 # ============================================================================
-# DATABASE MANAGEMENT (unchanged)
+# DATABASE MANAGEMENT (unchanged – full implementation)
 # ============================================================================
 class DatabaseManager:
     def __init__(self, db_path: Path = None):
@@ -1088,8 +1061,7 @@ class MediaProcessor:
                 buf = io.BytesIO()
                 img.save(buf, format='JPEG', quality=95, optimize=True)
                 return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
-        except Exception as e:
-            st.error(f"Error generating HD image: {str(e)}")
+        except Exception:
             return ""
 
     @staticmethod
@@ -1288,7 +1260,7 @@ class UIComponents:
 
 
 # ============================================================================
-# ALBUM MANAGER
+# ALBUM MANAGER (core logic)
 # ============================================================================
 class AlbumManager:
     def __init__(self):
@@ -1462,7 +1434,6 @@ class AlbumManager:
                 st.error(f"Stats error: {str(e)}")
                 return {'media_count': 0, 'image_count': 0, 'video_count': 0,
                         'comment_count': 0, 'avg_rating': 0.0, 'last_activity': None}
-
         return self.cache.get_or_set(cache_key, gen)
 
     def add_to_favorites(self, entry_id: str):
@@ -1598,7 +1569,6 @@ class AlbumManager:
             except sqlite3.Error as e:
                 st.error(f"Error: {str(e)}")
                 return {'entries': [], 'total_count': 0, 'total_pages': 1, 'current_page': page}
-
         return self.cache.get_or_set(cache_key, gen)
 
     def get_all_entries_for_person(self, person_id: str, media_filter: str = 'all') -> List[Dict]:
@@ -1711,7 +1681,7 @@ class AlbumManager:
 
 
 # ============================================================================
-# MAIN APPLICATION CLASS (with enhanced viewer and expanded view)
+# MAIN APPLICATION CLASS (with improved sidebar and gallery)
 # ============================================================================
 class PhotoVideoAlbumApp:
     def __init__(self):
@@ -1739,7 +1709,7 @@ class PhotoVideoAlbumApp:
             self.initialized = False
 
     def _load_tree(self):
-        """Build directory tree from file system (folders only, not files)."""
+        """Build directory tree from file system (folders only, no files)."""
         self.tree = {}
         data_dir = Config.DATA_DIR
         if not data_dir.exists():
@@ -1749,7 +1719,6 @@ class PhotoVideoAlbumApp:
         for folder in sorted(data_dir.iterdir()):
             if not folder.is_dir() or folder.name.startswith('.') or folder.name in skip:
                 continue
-            # Count media files inside
             image_count = 0
             video_count = 0
             for f in folder.iterdir():
@@ -1765,7 +1734,6 @@ class PhotoVideoAlbumApp:
                 'image_count': image_count,
                 'video_count': video_count
             }
-        # Auto-select first folder if none selected
         if st.session_state.get('selected_folder') is None and self.tree:
             st.session_state['selected_folder'] = list(self.tree.keys())[0]
 
@@ -1773,86 +1741,104 @@ class PhotoVideoAlbumApp:
     def frame_style(self) -> str:
         return st.session_state.get('frame_style', Config.DEFAULT_FRAME_STYLE)
 
+    # ------------------- SIDEBAR (scientific arrangement) -------------------
     def render_sidebar(self):
         with st.sidebar:
             st.title(f"🎬📸 {Config.APP_NAME}")
             st.caption(f"v{Config.VERSION}")
             st.divider()
 
+            # User info
             col1, col2 = st.columns([1, 3])
             with col1:
                 st.markdown("👤")
             with col2:
                 st.markdown(f"**{st.session_state['username']}**")
                 st.caption(st.session_state['user_role'].title())
-
             st.divider()
-            st.subheader("Navigation")
-            nav = {"🏠 Dashboard": "dashboard", "👥 People": "people",
-                   "📁 Media Gallery": "gallery", "⭐ Favorites": "favorites",
-                   "🎬 Video Library": "videos", "📸 Photo Library": "photos",
-                   "🔍 Search": "search", "📊 Statistics": "statistics",
-                   "⚙️ Settings": "settings", "📤 Import/Export": "import_export"}
-            for label, key in nav.items():
+
+            # ------------- PRIMARY NAVIGATION -------------
+            st.subheader("📌 Navigation")
+            nav_items = {
+                "🏠 Dashboard": "dashboard",
+                "👥 People": "people",
+                "🖼️ Media Gallery": "gallery",
+                "⭐ Favorites": "favorites",
+                "🎬 Video Library": "videos",
+                "📸 Photo Library": "photos",
+                "🔍 Search": "search",
+                "📊 Statistics": "statistics",
+                "⚙️ Settings": "settings",
+                "📤 Import/Export": "import_export"
+            }
+            for label, key in nav_items.items():
                 if st.button(label, use_container_width=True, key=f"nav_{key}"):
                     st.session_state['current_page'] = key
                     st.session_state['media_nav_list'] = []
                     st.rerun()
-
             st.divider()
-            st.subheader("Quick Actions")
-            if st.button("🔄 Scan Directory", use_container_width=True):
-                with st.spinner("Scanning…"):
-                    r = self.manager.scan_directory()
-                    if r['new_media'] > 0:
-                        st.success(f"Found {r['new_media']} new media ({r['images_found']} imgs, {r['videos_found']} vids)")
-                    self._load_tree()
+
+            # ------------- QUICK ACTIONS (expander) -------------
+            with st.expander("⚡ Quick Actions"):
+                if st.button("🔄 Scan Directory", use_container_width=True):
+                    with st.spinner("Scanning directories..."):
+                        r = self.manager.scan_directory()
+                        if r['new_media'] > 0:
+                            st.success(f"Found {r['new_media']} new media ({r['images_found']} 📸, {r['videos_found']} 🎬)")
+                        self._load_tree()
+                        st.rerun()
+                if st.button("🗑️ Clear Cache", use_container_width=True):
+                    self.manager.cache.clear()
+                    st.success("Cache cleared!")
                     st.rerun()
-            if st.button("🗑️ Clear Cache", use_container_width=True):
-                self.manager.cache.clear()
-                st.success("Cache cleared!")
-                st.rerun()
+
+            # ------------- FRAME STYLE (expander) -------------
+            with st.expander("🖼️ Frame Style"):
+                fs = st.selectbox("Choose frame style", Config.FRAME_STYLES,
+                                  index=Config.FRAME_STYLES.index(self.frame_style),
+                                  key="frame_style_selector")
+                if fs != self.frame_style:
+                    st.session_state['frame_style'] = fs
+                    st.rerun()
 
             st.divider()
-            st.subheader("Frame Style")
-            fs = st.selectbox("Choose frame", Config.FRAME_STYLES,
-                              index=Config.FRAME_STYLES.index(self.frame_style),
-                              key="frame_style_selector")
-            if fs != self.frame_style:
-                st.session_state['frame_style'] = fs
-                st.rerun()
 
-            st.divider()
+            # ------------- DIRECTORY EXPLORER -------------
             st.subheader("📂 Directories")
-            # Only folders, no files
-            for folder_name, info in self.tree.items():
-                is_active = (st.session_state.get('selected_folder') == folder_name)
-                button_label = f"📁 {info['display_name']}  ({info['image_count']} 📸 {info['video_count']} 🎬)"
-                if st.button(button_label, key=f"folder_{folder_name}", use_container_width=True):
-                    st.session_state['selected_folder'] = folder_name
-                    st.session_state['selected_file_index'] = 0  # reset file index
-                    st.session_state['media_nav_list'] = []     # clear nav cache
-                    st.rerun()
+            if not self.tree:
+                st.info("No folders found. Click 'Scan Directory' above.")
+            else:
+                for folder_name, info in self.tree.items():
+                    is_active = (st.session_state.get('selected_folder') == folder_name)
+                    button_label = f"📁 {info['display_name']}  ({info['image_count']} 📸 {info['video_count']} 🎬)"
+                    if st.button(button_label, key=f"folder_{folder_name}", use_container_width=True,
+                                 type="primary" if is_active else "secondary"):
+                        st.session_state['selected_folder'] = folder_name
+                        st.session_state['selected_file_index'] = 0
+                        st.session_state['gallery_page'] = 1
+                        st.session_state['media_nav_list'] = []
+                        st.rerun()
 
             st.divider()
+
+            # ------------- STATISTICS -------------
             people = self.manager.db.get_all_people()
-            ti = tv = 0
-            for p in people:
-                s = self.manager.get_person_stats(p['person_id'])
-                ti += s.get('image_count', 0)
-                tv += s.get('video_count', 0)
-            st.metric("People", len(people))
-            c1, c2 = st.columns(2)
-            with c1: st.metric("Images", ti)
-            with c2: st.metric("Videos", tv)
+            ti = sum(self.manager.get_person_stats(p['person_id']).get('image_count', 0) for p in people)
+            tv = sum(self.manager.get_person_stats(p['person_id']).get('video_count', 0) for p in people)
+            st.metric("👥 People", len(people))
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("📸 Images", ti)
+            with col2:
+                st.metric("🎬 Videos", tv)
 
             st.divider()
             autoplay = st.toggle("Video Autoplay", value=st.session_state.get('video_autoplay', False))
             if autoplay != st.session_state.get('video_autoplay', False):
                 st.session_state['video_autoplay'] = autoplay
 
+    # ------------------- HELPER: GET FILES IN SELECTED FOLDER -------------------
     def _get_current_files(self) -> List[Dict]:
-        """Return list of media files in the currently selected folder."""
         folder = st.session_state.get('selected_folder')
         if not folder or folder not in self.tree:
             return []
@@ -1871,14 +1857,172 @@ class PhotoVideoAlbumApp:
                 })
         return files
 
-    def _get_current_file(self) -> Optional[Dict]:
-        files = self._get_current_files()
-        idx = st.session_state.get('selected_file_index', 0)
-        if files and 0 <= idx < len(files):
-            return files[idx]
-        return None
+    # ------------------- GALLERY PAGE (folder content) -------------------
+    def render_gallery_page(self):
+        folder = st.session_state.get('selected_folder')
+        if not folder or folder not in self.tree:
+            st.info("Select a folder from the sidebar to view its media.")
+            return
 
-    # ── ENHANCED MEDIA DETAIL PAGE (with expanded view) ──
+        folder_info = self.tree[folder]
+        render_breadcrumb([("🏠 Home", "dashboard"), (folder_info['display_name'], "gallery")])
+        st.title(f"📁 {folder_info['display_name']}")
+
+        files = self._get_current_files()
+        if not files:
+            st.info("No media files in this folder.")
+            if st.button("Scan for new media"):
+                with st.spinner("Scanning..."):
+                    self.manager.scan_directory()
+                    self._load_tree()
+                st.rerun()
+            return
+
+        # Pagination and view settings
+        page = st.session_state.get('gallery_page', 1)
+        items_per_page = st.selectbox("Items per page", [12, 24, 48], index=0, key="gallery_ipp")
+        total_pages = max(1, math.ceil(len(files) / items_per_page))
+        start = (page - 1) * items_per_page
+        end = start + items_per_page
+        page_files = files[start:end]
+
+        view_mode = st.radio("View", ["Grid", "List"], horizontal=True, key="gallery_view_mode")
+
+        if view_mode == "Grid":
+            cols = st.columns(4)
+            for idx, f in enumerate(page_files):
+                with cols[idx % 4]:
+                    self._render_gallery_item_from_file(f, folder_info['display_name'])
+        else:
+            for f in page_files:
+                self._render_gallery_item_list_from_file(f, folder_info['display_name'])
+
+        # Pagination controls
+        if total_pages > 1:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.write(f"Page {page} of {total_pages}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if page > 1:
+                        if st.button("Previous"):
+                            st.session_state.gallery_page = page - 1
+                            st.rerun()
+                with c2:
+                    if page < total_pages:
+                        if st.button("Next"):
+                            st.session_state.gallery_page = page + 1
+                            st.rerun()
+
+    def _render_gallery_item_from_file(self, file: Dict, display_name: str):
+        with st.container(border=True):
+            st.markdown(UIComponents.media_type_badge(file['type']), unsafe_allow_html=True)
+            # Thumbnail
+            thumb_url = None
+            if file['type'] == 'image':
+                thumb_path = Config.THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
+                if thumb_path.exists():
+                    thumb_url = MediaProcessor.get_media_data_url(thumb_path)
+                else:
+                    thumb_url = MediaProcessor.get_thumb_strip_url(Path(file['path']), is_video=False)
+            else:
+                thumb_path = Config.VIDEO_THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
+                if thumb_path.exists():
+                    thumb_url = MediaProcessor.get_media_data_url(thumb_path)
+            if not thumb_url:
+                thumb_url = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200' viewBox='0 0 300 200'%3E%3Crect width='300' height='200' fill='%23333'/%3E%3Ctext x='150' y='110' fill='%23fff' font-size='24' text-anchor='middle'%3E📸%3C/text%3E%3C/svg%3E"
+            st.markdown(FrameRenderer.wrap_thumbnail(thumb_url, file['stem'], self.frame_style, file['type']=='video', None), unsafe_allow_html=True)
+            st.markdown(f"**{file['stem']}**")
+            st.caption(f"👤 {display_name}")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("👁️ View", key=f"view_file_{file['path']}", use_container_width=True):
+                    # Get or create entry ID for this file
+                    file_path = Path(file['path'])
+                    checksum = MediaMetadata._calculate_checksum(file_path)
+                    with sqlite3.connect(self.manager.db.db_path) as conn:
+                        c = conn.cursor()
+                        c.execute("SELECT media_id FROM media WHERE checksum = ?", (checksum,))
+                        row = c.fetchone()
+                    if row:
+                        st.session_state['selected_media'] = row[0]
+                        # Build navigation list from all files in current folder
+                        nav_entries = []
+                        for f in self._get_current_files():
+                            fp = Path(f['path'])
+                            chk = MediaMetadata._calculate_checksum(fp)
+                            with sqlite3.connect(self.manager.db.db_path) as conn2:
+                                c2 = conn2.cursor()
+                                c2.execute("SELECT entry_id, media_id FROM album_entries WHERE media_id IN (SELECT media_id FROM media WHERE checksum=?)", (chk,))
+                                row2 = c2.fetchone()
+                            if row2:
+                                nav_entries.append({'entry_id': row2[0], 'media_id': row2[1], 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
+                            else:
+                                # fallback
+                                nav_entries.append({'entry_id': str(uuid.uuid4()), 'media_id': '', 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
+                        st.session_state['media_nav_list'] = nav_entries
+                        idx = next((i for i, e in enumerate(nav_entries) if e.get('media_id') == row[0]), 0)
+                        st.session_state['media_nav_index'] = idx
+                        st.session_state['current_page'] = 'media_detail'
+                        st.rerun()
+                    else:
+                        st.error("Media not in database. Please scan directory.")
+            with c2:
+                with open(Path(file['path']), 'rb') as f:
+                    st.download_button("💾", data=f.read(), file_name=Path(file['path']).name, use_container_width=True)
+
+    def _render_gallery_item_list_from_file(self, file: Dict, display_name: str):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 3, 1])
+            with c1:
+                thumb_url = None
+                if file['type'] == 'image':
+                    thumb_path = Config.THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
+                    if thumb_path.exists():
+                        thumb_url = MediaProcessor.get_media_data_url(thumb_path)
+                else:
+                    thumb_path = Config.VIDEO_THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
+                    if thumb_path.exists():
+                        thumb_url = MediaProcessor.get_media_data_url(thumb_path)
+                if not thumb_url:
+                    thumb_url = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='80' viewBox='0 0 100 80'%3E%3Crect width='100' height='80' fill='%23333'/%3E%3Ctext x='50' y='45' fill='%23fff' font-size='16' text-anchor='middle'%3E📸%3C/text%3E%3C/svg%3E"
+                st.image(thumb_url, width=100)
+            with c2:
+                st.markdown(f"### {file['stem']}")
+                st.markdown(UIComponents.media_type_badge(file['type']), unsafe_allow_html=True)
+                st.caption(f"👤 {display_name}")
+                st.caption(f"📦 {file['size']/(1024*1024):.2f} MB")
+            with c3:
+                if st.button("View", key=f"view_list_{file['path']}", use_container_width=True):
+                    file_path = Path(file['path'])
+                    checksum = MediaMetadata._calculate_checksum(file_path)
+                    with sqlite3.connect(self.manager.db.db_path) as conn:
+                        c = conn.cursor()
+                        c.execute("SELECT media_id FROM media WHERE checksum = ?", (checksum,))
+                        row = c.fetchone()
+                    if row:
+                        st.session_state['selected_media'] = row[0]
+                        nav_entries = []
+                        for f in self._get_current_files():
+                            fp = Path(f['path'])
+                            chk = MediaMetadata._calculate_checksum(fp)
+                            with sqlite3.connect(self.manager.db.db_path) as conn2:
+                                c2 = conn2.cursor()
+                                c2.execute("SELECT entry_id, media_id FROM album_entries WHERE media_id IN (SELECT media_id FROM media WHERE checksum=?)", (chk,))
+                                row2 = c2.fetchone()
+                            if row2:
+                                nav_entries.append({'entry_id': row2[0], 'media_id': row2[1], 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
+                            else:
+                                nav_entries.append({'entry_id': str(uuid.uuid4()), 'media_id': '', 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
+                        st.session_state['media_nav_list'] = nav_entries
+                        idx = next((i for i, e in enumerate(nav_entries) if e.get('media_id') == row[0]), 0)
+                        st.session_state['media_nav_index'] = idx
+                        st.session_state['current_page'] = 'media_detail'
+                        st.rerun()
+                    else:
+                        st.error("Media not in database. Please scan directory.")
+
+    # ------------------- ENHANCED MEDIA DETAIL PAGE (unchanged) -------------------
     def render_enhanced_media_detail_page(self):
         entry_id = st.session_state.get('selected_media')
         if not entry_id:
@@ -1923,7 +2067,6 @@ class PhotoVideoAlbumApp:
         st.markdown(UIComponents.media_type_badge(current_entry.get('media_type', 'image')), unsafe_allow_html=True)
         st.markdown(f"👤 **{current_entry.get('display_name', 'Unknown')}**")
 
-        # Navigation columns: Prev | Main | Next
         col_prev, col_main, col_next = st.columns([1, 8, 1])
 
         with col_prev:
@@ -1946,7 +2089,6 @@ class PhotoVideoAlbumApp:
                 else:
                     st.error("Unable to load HD image")
 
-                # Action buttons (Expanded View replaces Fullscreen)
                 act_cols = st.columns([1, 1, 1, 2])
                 with act_cols[0]:
                     if st.button("🔍 Expanded View", use_container_width=True):
@@ -1969,7 +2111,6 @@ class PhotoVideoAlbumApp:
                             st.rerun()
                 with act_cols[3]:
                     st.caption(f"📸 {current_entry.get('width', '?')}×{current_entry.get('height', '?')}  •  {current_entry.get('file_size', 0)//1024} KB")
-
             else:  # Video
                 media_path = Config.DATA_DIR / current_entry['filepath']
                 st.markdown("### 🎬 Video Player")
@@ -1992,7 +2133,7 @@ class PhotoVideoAlbumApp:
                 st.markdown("<div style='opacity:0.3;font-size:28px;text-align:center;'>▶</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # Thumbnail strip
+        # Thumbnail strip (same as before)
         if len(nav_list) > 1:
             st.divider()
             st.markdown("#### 🖼️ Navigate – click any thumbnail")
@@ -2024,7 +2165,7 @@ class PhotoVideoAlbumApp:
             if len(nav_list) > 8:
                 st.caption(f"... and {len(nav_list)-8} more. Use ◀ ▶ to browse all.")
 
-        # Expanded View overlay (simple, reliable)
+        # Expanded View overlay
         if st.session_state.get('expanded_media'):
             expanded_url = st.session_state['expanded_media']
             st.markdown(f"""
@@ -2044,10 +2185,9 @@ class PhotoVideoAlbumApp:
                 st.session_state['expanded_media'] = None
                 st.rerun()
 
-        # Comments & Ratings
+        # Comments & Ratings (same as before)
         st.divider()
         st.subheader("💬 Comments & Ratings")
-
         avg_rating = current_entry.get('avg_rating', 0)
         rating_count = current_entry.get('rating_count', 0)
         st.markdown(UIComponents.rating_stars(avg_rating), unsafe_allow_html=True)
@@ -2100,7 +2240,7 @@ class PhotoVideoAlbumApp:
                 for k, v in list(current_entry['exif_data'].items())[:10]:
                     st.caption(f"{k}: {v}")
 
-    # ── DASHBOARD (unchanged) ─────────────────────────────────────────
+    # ------------------- DASHBOARD -------------------
     def render_dashboard(self):
         render_breadcrumb([("🏠 Home", "dashboard")])
         st.title("📊 Dashboard")
@@ -2170,10 +2310,11 @@ class PhotoVideoAlbumApp:
         ca, cb, cc = st.columns(3)
         with ca:
             if st.button("📁 Scan for New Media", use_container_width=True):
-                r = self.manager.scan_directory()
-                st.success(f"Found {r['new_media']} new media!")
-                self._load_tree()
-                st.rerun()
+                with st.spinner("Scanning..."):
+                    r = self.manager.scan_directory()
+                    st.success(f"Found {r['new_media']} new media!")
+                    self._load_tree()
+                    st.rerun()
         with cb:
             if st.button("👥 Manage People", use_container_width=True):
                 st.session_state['current_page'] = 'people'; st.rerun()
@@ -2181,7 +2322,7 @@ class PhotoVideoAlbumApp:
             if st.button("🎬 View Videos", use_container_width=True):
                 st.session_state['current_page'] = 'videos'; st.rerun()
 
-    # ── PEOPLE PAGE (unchanged) ───────────────────────────────────────
+    # ------------------- PEOPLE PAGE (unchanged, but uses gallery page internally) -------------------
     def render_people_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("👥 People", "people")])
         st.title("👥 People")
@@ -2218,7 +2359,8 @@ class PhotoVideoAlbumApp:
                     with cb: st.metric("Images", person.get('image_count', 0))
                     with cc: st.metric("Videos", person.get('video_count', 0))
                     if st.button("View Gallery", key=f"view_{person['person_id']}", use_container_width=True):
-                        st.session_state['selected_person'] = person['person_id']
+                        # Map person to folder and go to gallery
+                        st.session_state['selected_folder'] = person['folder_name']
                         st.session_state['current_page'] = 'gallery'
                         st.rerun()
 
@@ -2253,193 +2395,16 @@ class PhotoVideoAlbumApp:
                     else:
                         st.warning("Fill in required fields (*)")
 
-    # ── GALLERY PAGE (modified: uses folder selection from sidebar, no person override) ──
-    def render_gallery_page(self):
-        # If a person was selected from People page, we map it to the corresponding folder
-        sp = st.session_state.get('selected_person')
-        if sp:
-            # Find person's folder name
-            person_dict = self.manager.db.get_person_by_folder(sp)  # sp is person_id? Actually selected_person is person_id
-            if person_dict:
-                folder_name = person_dict['folder_name']
-                st.session_state['selected_folder'] = folder_name
-                st.session_state['selected_person'] = None  # clear after mapping
-                st.rerun()
-            else:
-                st.error("Person not found")
-                st.session_state['selected_person'] = None
-                st.rerun()
+    # ------------------- OTHER PAGES (videos, photos, favorites, search, statistics, settings, import_export) -------------------
+    # (These are unchanged from the previous working version – omitted for brevity but included in the final code.
+    #  They are identical to the ones in the previous answer, with small adjustments to use the new folder-based gallery.)
+    # For the sake of length, I'll include them in the final code block but not repeat them here.
+    # The complete runnable script below contains all pages fully implemented.)
 
-        folder = st.session_state.get('selected_folder')
-        if not folder or folder not in self.tree:
-            st.info("Select a folder from the sidebar to view its media.")
-            return
+    # ... (render_videos_page, render_photos_page, render_favorites_page, render_search_page,
+    #      render_statistics_page, render_settings_page, render_import_export_page – unchanged
+    #      except they refer to self._render_gallery_item which is still defined)
 
-        folder_info = self.tree[folder]
-        render_breadcrumb([("🏠 Home", "dashboard"), (folder_info['display_name'], "gallery")])
-        st.title(f"📁 {folder_info['display_name']}")
-
-        # Get files in this folder
-        files = self._get_current_files()
-        if not files:
-            st.info("No media files in this folder.")
-            if st.button("Scan for new media"):
-                self.manager.scan_directory()
-                self._load_tree()
-                st.rerun()
-            return
-
-        # Pagination and view settings
-        page = st.session_state.get('gallery_page', 1)
-        items_per_page = st.selectbox("Items per page", [12, 24, 48], index=0, key="gallery_ipp")
-        total_pages = max(1, math.ceil(len(files) / items_per_page))
-        start = (page - 1) * items_per_page
-        end = start + items_per_page
-        page_files = files[start:end]
-
-        # View mode
-        view_mode = st.radio("View", ["Grid", "List"], horizontal=True, key="gallery_view_mode")
-
-        if view_mode == "Grid":
-            cols = st.columns(4)
-            for idx, f in enumerate(page_files):
-                with cols[idx % 4]:
-                    self._render_gallery_item_from_file(f, folder_info['display_name'])
-        else:
-            for f in page_files:
-                self._render_gallery_item_list_from_file(f, folder_info['display_name'])
-
-        # Pagination controls
-        if total_pages > 1:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.write(f"Page {page} of {total_pages}")
-                if page > 1:
-                    if st.button("Previous"):
-                        st.session_state.gallery_page = page - 1
-                        st.rerun()
-                if page < total_pages:
-                    if st.button("Next"):
-                        st.session_state.gallery_page = page + 1
-                        st.rerun()
-
-    def _render_gallery_item_from_file(self, file: Dict, display_name: str):
-        with st.container(border=True):
-            media_type = file['type']
-            st.markdown(UIComponents.media_type_badge(media_type), unsafe_allow_html=True)
-            # Thumbnail
-            thumb_url = None
-            if media_type == 'image':
-                thumb_path = Config.THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
-                if thumb_path.exists():
-                    thumb_url = MediaProcessor.get_media_data_url(thumb_path)
-                else:
-                    thumb_url = MediaProcessor.get_thumb_strip_url(Path(file['path']), is_video=False)
-            else:
-                thumb_path = Config.VIDEO_THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
-                if thumb_path.exists():
-                    thumb_url = MediaProcessor.get_media_data_url(thumb_path)
-            if not thumb_url:
-                thumb_url = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200' viewBox='0 0 300 200'%3E%3Crect width='300' height='200' fill='%23333'/%3E%3Ctext x='150' y='110' fill='%23fff' font-size='24' text-anchor='middle'%3E📸%3C/text%3E%3C/svg%3E"
-            st.markdown(FrameRenderer.wrap_thumbnail(thumb_url, file['stem'], self.frame_style, media_type=='video', None), unsafe_allow_html=True)
-            st.markdown(f"**{file['stem']}**")
-            st.caption(f"👤 {display_name}")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("👁️ View", key=f"view_file_{file['path']}", use_container_width=True):
-                    # Need to get or create an album entry for this file (or directly use file)
-                    # For simplicity, we'll create a temporary entry ID or just pass file path
-                    # Since the original code expects an entry_id, we'll look up the media in DB
-                    file_path = Path(file['path'])
-                    # Find media_id by checksum or path
-                    checksum = MediaMetadata._calculate_checksum(file_path)
-                    with sqlite3.connect(self.manager.db.db_path) as conn:
-                        c = conn.cursor()
-                        c.execute("SELECT media_id FROM media WHERE checksum = ?", (checksum,))
-                        row = c.fetchone()
-                    if row:
-                        st.session_state['selected_media'] = row[0]
-                        # Build navigation list for this folder's files
-                        # Convert files to entry-like dicts
-                        nav_entries = []
-                        for f in self._get_current_files():
-                            fp = Path(f['path'])
-                            chk = MediaMetadata._calculate_checksum(fp)
-                            with sqlite3.connect(self.manager.db.db_path) as conn2:
-                                c2 = conn2.cursor()
-                                c2.execute("SELECT entry_id, media_id FROM album_entries WHERE media_id IN (SELECT media_id FROM media WHERE checksum=?)", (chk,))
-                                row2 = c2.fetchone()
-                            if row2:
-                                nav_entries.append({'entry_id': row2[0], 'media_id': row2[1], 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
-                            else:
-                                # fallback
-                                nav_entries.append({'entry_id': str(uuid.uuid4()), 'media_id': '', 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
-                        st.session_state['media_nav_list'] = nav_entries
-                        idx = next((i for i, e in enumerate(nav_entries) if e.get('media_id') == row[0]), 0)
-                        st.session_state['media_nav_index'] = idx
-                        st.session_state['current_page'] = 'media_detail'
-                        st.rerun()
-                    else:
-                        st.error("Could not find media in database. Please scan directory.")
-            with c2:
-                # Simple download
-                fp = Path(file['path'])
-                with open(fp, 'rb') as f:
-                    st.download_button("💾", data=f.read(), file_name=fp.name, use_container_width=True)
-
-    def _render_gallery_item_list_from_file(self, file: Dict, display_name: str):
-        with st.container(border=True):
-            c1, c2, c3 = st.columns([1, 3, 1])
-            with c1:
-                thumb_url = None
-                if file['type'] == 'image':
-                    thumb_path = Config.THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
-                    if thumb_path.exists():
-                        thumb_url = MediaProcessor.get_media_data_url(thumb_path)
-                else:
-                    thumb_path = Config.VIDEO_THUMBNAIL_DIR / f"{Path(file['path']).stem}_thumb.jpg"
-                    if thumb_path.exists():
-                        thumb_url = MediaProcessor.get_media_data_url(thumb_path)
-                if not thumb_url:
-                    thumb_url = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='80' viewBox='0 0 100 80'%3E%3Crect width='100' height='80' fill='%23333'/%3E%3Ctext x='50' y='45' fill='%23fff' font-size='16' text-anchor='middle'%3E📸%3C/text%3E%3C/svg%3E"
-                st.image(thumb_url, width=100)
-            with c2:
-                st.markdown(f"### {file['stem']}")
-                st.markdown(UIComponents.media_type_badge(file['type']), unsafe_allow_html=True)
-                st.caption(f"👤 {display_name}")
-                st.caption(f"📦 {file['size']/(1024*1024):.2f} MB")
-            with c3:
-                if st.button("View", key=f"view_list_{file['path']}", use_container_width=True):
-                    # Same logic as above
-                    file_path = Path(file['path'])
-                    checksum = MediaMetadata._calculate_checksum(file_path)
-                    with sqlite3.connect(self.manager.db.db_path) as conn:
-                        c = conn.cursor()
-                        c.execute("SELECT media_id FROM media WHERE checksum = ?", (checksum,))
-                        row = c.fetchone()
-                    if row:
-                        st.session_state['selected_media'] = row[0]
-                        nav_entries = []
-                        for f in self._get_current_files():
-                            fp = Path(f['path'])
-                            chk = MediaMetadata._calculate_checksum(fp)
-                            with sqlite3.connect(self.manager.db.db_path) as conn2:
-                                c2 = conn2.cursor()
-                                c2.execute("SELECT entry_id, media_id FROM album_entries WHERE media_id IN (SELECT media_id FROM media WHERE checksum=?)", (chk,))
-                                row2 = c2.fetchone()
-                            if row2:
-                                nav_entries.append({'entry_id': row2[0], 'media_id': row2[1], 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
-                            else:
-                                nav_entries.append({'entry_id': str(uuid.uuid4()), 'media_id': '', 'filepath': str(fp.relative_to(Config.DATA_DIR)), 'media_type': f['type'], 'caption': f['stem']})
-                        st.session_state['media_nav_list'] = nav_entries
-                        idx = next((i for i, e in enumerate(nav_entries) if e.get('media_id') == row[0]), 0)
-                        st.session_state['media_nav_index'] = idx
-                        st.session_state['current_page'] = 'media_detail'
-                        st.rerun()
-                    else:
-                        st.error("Media not in DB; please scan directory.")
-
-    # ── VIDEOS PAGE (unchanged) ───────────────────────────────────────
     def render_videos_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("🎬 Videos", "videos")])
         st.title("🎬 Video Library")
@@ -2484,7 +2449,6 @@ class PhotoVideoAlbumApp:
                         st.session_state['current_page'] = 'media_detail'
                         st.rerun()
 
-    # ── PHOTOS PAGE (unchanged) ───────────────────────────────────────
     def render_photos_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("📸 Photos", "photos")])
         st.title("📸 Photo Library")
@@ -2523,7 +2487,6 @@ class PhotoVideoAlbumApp:
                         st.session_state['current_page'] = 'media_detail'
                         st.rerun()
 
-    # ── FAVORITES PAGE (unchanged) ────────────────────────────────────
     def render_favorites_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("⭐ Favorites", "favorites")])
         st.title("⭐ Favorites")
@@ -2534,10 +2497,9 @@ class PhotoVideoAlbumApp:
         cols = st.columns(4)
         for idx, entry in enumerate(favs):
             with cols[idx % 4]:
-                self._render_gallery_item(entry)  # uses existing method
+                self._render_gallery_item(entry)
 
     def _render_gallery_item(self, entry: Dict):
-        # Reuse existing method from original code
         with st.container(border=True):
             st.markdown(UIComponents.media_type_badge(entry.get('media_type', 'image')),
                         unsafe_allow_html=True)
@@ -2556,18 +2518,15 @@ class PhotoVideoAlbumApp:
                 entry.get('media_type') == MediaType.VIDEO.value,
                 entry.get('duration')),
                 unsafe_allow_html=True)
-
             st.markdown(f"**{entry.get('caption', 'Untitled')}**")
             st.caption(f"👤 {entry.get('display_name', 'Unknown')}")
             if entry.get('avg_rating'):
                 st.markdown(UIComponents.rating_stars(entry['avg_rating'], size=15),
                             unsafe_allow_html=True)
-
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("👁️ View", key=f"view_{entry['entry_id']}", use_container_width=True):
                     st.session_state['selected_media'] = entry['entry_id']
-                    # Pre-load navigation list
                     person_id = entry.get('person_id')
                     media_filter = st.session_state.get('media_filter', 'all')
                     all_entries = self.manager.get_all_entries_for_person(person_id, media_filter)
@@ -2586,7 +2545,6 @@ class PhotoVideoAlbumApp:
                     if st.button("☆", key=f"fav_{entry['entry_id']}", use_container_width=True):
                         self.manager.add_to_favorites(entry['entry_id']); st.rerun()
 
-    # ── SEARCH PAGE (unchanged) ───────────────────────────────────────
     def render_search_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("🔍 Search", "search")])
         st.title("🔍 Search")
@@ -2623,7 +2581,6 @@ class PhotoVideoAlbumApp:
         else:
             st.info("Enter a search term")
 
-    # ── STATISTICS PAGE (unchanged) ───────────────────────────────────
     def render_statistics_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("📊 Statistics", "statistics")])
         st.title("📊 Statistics")
@@ -2668,7 +2625,6 @@ class PhotoVideoAlbumApp:
             st.download_button("Download", df.to_csv(index=False),
                                "album_stats.csv", "text/csv")
 
-    # ── SETTINGS PAGE (unchanged) ─────────────────────────────────────
     def render_settings_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("⚙️ Settings", "settings")])
         st.title("⚙️ Settings")
@@ -2762,7 +2718,6 @@ class PhotoVideoAlbumApp:
                 if st.button("Show Config"):
                     st.write({k: str(v) for k, v in vars(Config).items() if not k.startswith('_')})
 
-    # ── IMPORT/EXPORT PAGE (unchanged) ────────────────────────────────
     def render_import_export_page(self):
         render_breadcrumb([("🏠 Home", "dashboard"), ("📤 Import/Export", "import_export")])
         st.title("📤 Import/Export")
@@ -2900,7 +2855,7 @@ class PhotoVideoAlbumApp:
                     except Exception as e:
                         st.error(str(e))
 
-    # ── MAIN RENDERER ─────────────────────────────────────────────────
+    # ------------------- MAIN RENDERER -------------------
     def render_main(self):
         FrameRenderer.inject_global_css()
         self.render_sidebar()
