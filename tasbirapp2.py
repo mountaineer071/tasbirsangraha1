@@ -1,4 +1,3 @@
-```python
 """
 COMPREHENSIVE WEB PHOTO & VIDEO ALBUM APPLICATION
 Version: 7.0.0 - Ultimate Edition
@@ -782,4 +781,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
+
