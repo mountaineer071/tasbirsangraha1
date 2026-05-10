@@ -1,17 +1,14 @@
 """
-MEMORYVAULT FORUM PRO v8.2.0
-Interactive Chat Forum with Guest Registration, Photo Timer & Upvotes
-Fixed: StreamlitAPIException on session state widget keys
+MEMORYVAULT FORUM PRO v8.3.0
+WhatsApp-style Chat + Upload Timer Selection + Fixed Gallery
 """
 import streamlit as st
 from pathlib import Path
 from PIL import Image, ImageOps
 import base64
-import json
 import datetime
 import uuid
 from typing import Dict, List, Optional
-from enum import Enum
 import os
 import warnings
 import time
@@ -52,7 +49,8 @@ class SessionStorage:
         return st.session_state.session_uploads.get(file_id)
 
     def add_chat_message(self, user_id: str, username: str, content: str, 
-                        media_ids: List[str] = None, reply_to: Optional[str] = None):
+                        media_ids: List[str] = None, reply_to: Optional[str] = None,
+                        timer_duration: int = 300):
         st.session_state.message_counter += 1
         msg_id = f"msg_{st.session_state.message_counter}_{uuid.uuid4().hex[:8]}"
 
@@ -73,11 +71,12 @@ class SessionStorage:
         if media_ids:
             st.session_state.photo_timers[msg_id] = {
                 'created_at': time.time(),
-                'base_duration': 300,
+                'base_duration': timer_duration,
                 'upvote_extension': 0,
-                'total_duration': 300,
-                'expires_at': time.time() + 300,
-                'media_ids': media_ids.copy()
+                'total_duration': timer_duration,
+                'expires_at': time.time() + timer_duration,
+                'media_ids': media_ids.copy(),
+                'timer_choice': timer_duration
             }
         return msg_id
 
@@ -101,6 +100,7 @@ class SessionStorage:
                 if timer:
                     msg['time_remaining'] = max(0, int(timer['expires_at'] - now))
                     msg['upvote_count'] = timer['upvote_extension'] // 60
+                    msg['timer_choice'] = timer.get('timer_choice', 300)
 
             msg['like_count'] = len(msg['likes'])
             messages.append(msg)
@@ -190,16 +190,22 @@ class SessionStorage:
 # ============================================================================
 class Config:
     APP_NAME = "MemoryVault Forum Pro"
-    VERSION = "8.2.0"
+    VERSION = "8.3.0"
     MAX_MESSAGE_LENGTH = 2000
     MAX_FILE_SIZE = 50 * 1024 * 1024
     SUPPORTED_VIDEO_FORMATS = ['.mp4','.mov','.avi','.mkv','.webm','.wmv','.flv','.m4v']
     IMAGE_EXTENSIONS = {'.jpg','.jpeg','.png','.gif','.bmp','.webp','.tiff'}
     ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | set(SUPPORTED_VIDEO_FORMATS)
     THUMBNAIL_SIZE = (400, 400)
-    BASE_PHOTO_DURATION = 300
-    UPVOTE_EXTENSION = 60
     MAX_MESSAGES = 200
+    TIMER_OPTIONS = {
+        "1 minute": 60,
+        "3 minutes": 180,
+        "5 minutes": 300,
+        "10 minutes": 600,
+        "30 minutes": 1800,
+        "1 hour": 3600,
+    }
 
 
 # ============================================================================
@@ -278,62 +284,180 @@ class MediaProcessor:
 
 
 # ============================================================================
-# CSS
+# CSS - WhatsApp Style
 # ============================================================================
 def inject_css():
     st.markdown("""
     <style>
-    .chat-message { 
-        background: linear-gradient(135deg, #667eea15, #764ba215); 
-        border-radius: 16px; 
-        padding: 14px; 
-        margin-bottom: 10px; 
-        border-left: 4px solid #667eea;
-        animation: slideIn 0.3s ease-out;
+    /* WhatsApp-style chat container */
+    .chat-container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: #e5ddd5;
+        border-radius: 12px;
+        padding: 10px;
+        min-height: 60vh;
     }
-    .chat-message.own { 
-        background: linear-gradient(135deg, #11998e15, #38ef7d15); 
-        border-left-color: #11998e;
+
+    /* Message bubbles */
+    .msg-row {
+        display: flex;
+        margin-bottom: 8px;
+        width: 100%;
     }
-    .chat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-    .chat-username { font-weight: 700; color: #667eea; font-size: 13px; }
-    .chat-time { color: #888; font-size: 11px; }
-    .chat-content { color: #333; line-height: 1.4; font-size: 14px; }
-    .chat-media { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-    .chat-media img { border-radius: 8px; max-height: 220px; object-fit: cover; cursor: pointer; transition: transform 0.2s; }
-    .chat-media img:hover { transform: scale(1.03); }
+    .msg-row.own {
+        justify-content: flex-end;
+    }
+    .msg-row.other {
+        justify-content: flex-start;
+    }
+
+    .msg-bubble {
+        max-width: 70%;
+        padding: 8px 12px;
+        border-radius: 12px;
+        position: relative;
+        word-wrap: break-word;
+    }
+    .msg-bubble.own {
+        background: #dcf8c6;
+        border-bottom-right-radius: 2px;
+        margin-left: auto;
+    }
+    .msg-bubble.other {
+        background: #ffffff;
+        border-bottom-left-radius: 2px;
+        margin-right: auto;
+    }
+
+    .msg-sender {
+        font-size: 12px;
+        font-weight: 600;
+        color: #667eea;
+        margin-bottom: 2px;
+    }
+    .msg-text {
+        font-size: 14px;
+        color: #111;
+        line-height: 1.4;
+        margin-bottom: 4px;
+    }
+    .msg-time {
+        font-size: 10px;
+        color: #888;
+        text-align: right;
+        margin-top: 2px;
+    }
+    .msg-media {
+        margin: 6px 0;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .msg-media img {
+        max-width: 100%;
+        max-height: 300px;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+
+    /* Timer badge inside bubble */
     .timer-badge {
-        display: inline-flex; align-items: center; gap: 4px;
-        background: #fff3e0; color: #e65100;
-        padding: 2px 8px; border-radius: 12px;
-        font-size: 11px; font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255,152,0,0.15);
+        color: #e65100;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        margin: 4px 0;
     }
     .timer-expired {
-        background: #ffebee; color: #c62828;
+        background: rgba(244,67,54,0.15);
+        color: #c62828;
     }
+
+    /* Action buttons row */
+    .msg-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 4px;
+        font-size: 12px;
+    }
+    .action-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #666;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+    .action-btn:hover {
+        background: rgba(0,0,0,0.05);
+        color: #333;
+    }
+    .action-btn.liked {
+        color: #ff4b4b;
+    }
+    .upvote-btn {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white !important;
+        border-radius: 12px;
+        padding: 2px 10px;
+        font-size: 11px;
+    }
+
+    /* Online sidebar */
     .online-badge {
-        display: inline-flex; align-items: center; gap: 6px;
-        background: #e8f5e9; color: #2e7d32;
-        padding: 4px 12px; border-radius: 20px;
-        font-size: 13px; font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #e8f5e9;
+        color: #2e7d32;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 600;
     }
     .online-dot {
-        width: 8px; height: 8px; background: #4caf50;
-        border-radius: 50%; animation: pulse 2s infinite;
+        width: 8px;
+        height: 8px;
+        background: #4caf50;
+        border-radius: 50%;
+        animation: pulse 2s infinite;
     }
+
+    /* Guest login */
     .guest-card {
         background: linear-gradient(135deg, #667eea, #764ba2);
-        color: white; padding: 28px; border-radius: 16px;
-        text-align: center; margin-bottom: 20px;
+        color: white;
+        padding: 32px;
+        border-radius: 20px;
+        text-align: center;
+        margin: 40px auto;
+        max-width: 500px;
     }
-    @keyframes slideIn {
-        from { opacity: 0; transform: translateY(15px); }
-        to { opacity: 1; transform: translateY(0); }
+
+    /* Input area */
+    .input-area {
+        background: #f0f0f0;
+        border-radius: 12px;
+        padding: 12px;
+        margin-top: 10px;
     }
+
     @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
         70% { box-shadow: 0 0 0 8px rgba(76, 175, 80, 0); }
         100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+    }
+
+    /* Hide default streamlit form margins */
+    .stForm {
+        border: none !important;
+        padding: 0 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -348,7 +472,7 @@ class GuestAuth:
         st.markdown("""
         <div class="guest-card">
             <h1>👋 MemoryVault Forum</h1>
-            <p>Join the conversation instantly. No account needed.</p>
+            <p style="font-size:16px; opacity:0.9;">Join the conversation instantly.<br>No account needed.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -392,7 +516,7 @@ class GuestAuth:
 
 
 # ============================================================================
-# FORUM CHAT
+# FORUM CHAT - WhatsApp Style
 # ============================================================================
 class ForumChat:
     def __init__(self):
@@ -400,25 +524,35 @@ class ForumChat:
         self.processor = MediaProcessor()
 
     def render_chat_input(self):
-        st.markdown("### 💬 Share a moment")
+        st.markdown("<div class='input-area'>", unsafe_allow_html=True)
 
-        # CRITICAL FIX: Use st.form with clear_on_submit=True
-        # This avoids all session state widget key conflicts
         with st.form(key="chat_form", clear_on_submit=True):
-            message_text = st.text_area("What's on your mind?", 
-                                       placeholder="Share thoughts, memories, or photos...",
+            message_text = st.text_area("Message", 
+                                       placeholder="Type a message...",
                                        max_chars=Config.MAX_MESSAGE_LENGTH,
-                                       height=80)
+                                       height=60,
+                                       label_visibility="collapsed")
 
-            uploaded_files = st.file_uploader(
-                "📎 Attach photos/videos", 
-                accept_multiple_files=True,
-                type=list(Config.ALLOWED_EXTENSIONS)
-            )
+            col1, col2 = st.columns([3,1])
+            with col1:
+                uploaded_files = st.file_uploader(
+                    "📎 Photos/Videos", 
+                    accept_multiple_files=True,
+                    type=list(Config.ALLOWED_EXTENSIONS),
+                    label_visibility="collapsed"
+                )
+            with col2:
+                timer_choice = st.selectbox(
+                    "⏱️ Timer",
+                    options=list(Config.TIMER_OPTIONS.keys()),
+                    index=2,  # Default 5 minutes
+                    help="How long photos stay visible"
+                )
 
-            submitted = st.form_submit_button("📤 Post to Forum", use_container_width=True, type="primary")
+            submitted = st.form_submit_button("📤 Send", use_container_width=True, type="primary")
 
-        # Process AFTER form submission (outside form context)
+        st.markdown("</div>", unsafe_allow_html=True)
+
         if submitted:
             if not message_text.strip() and not uploaded_files:
                 st.warning("Please write a message or upload media")
@@ -434,16 +568,18 @@ class ForumChat:
             user_id = st.session_state.current_user_id
             username = st.session_state.current_username
             media_ids = [m['file_id'] for m in media_metadata]
+            timer_seconds = Config.TIMER_OPTIONS[timer_choice]
 
             self.storage.add_chat_message(
                 user_id=user_id,
                 username=username,
                 content=message_text.strip(),
-                media_ids=media_ids
+                media_ids=media_ids,
+                timer_duration=timer_seconds
             )
 
-            st.success("Posted! ✅")
-            time.sleep(0.5)
+            st.success("Sent! ✅")
+            time.sleep(0.3)
             st.rerun()
 
     def format_time_remaining(self, seconds: int) -> str:
@@ -456,7 +592,8 @@ class ForumChat:
 
     def render_message(self, msg: Dict):
         is_own = msg['user_id'] == st.session_state.get('current_user_id')
-        own_class = "own" if is_own else ""
+        row_class = "own" if is_own else "other"
+        bubble_class = "own" if is_own else "other"
         current_uid = st.session_state.get('current_user_id', '')
 
         try:
@@ -468,58 +605,73 @@ class ForumChat:
         is_liked = current_uid in msg.get('likes', set())
         like_icon = "❤️" if is_liked else "🤍"
 
+        # Timer HTML
         timer_html = ""
         if msg.get('media_ids') and not msg.get('media_expired'):
             remaining = msg.get('time_remaining', 0)
             upvotes = msg.get('upvote_count', 0)
+            timer_choice = msg.get('timer_choice', 300)
+            timer_label = [k for k, v in Config.TIMER_OPTIONS.items() if v == timer_choice]
+            timer_label = timer_label[0] if timer_label else "5 min"
+
             timer_html = f"""
-            <div style="margin: 6px 0;">
-                <span class="timer-badge">
-                    ⏱️ {self.format_time_remaining(remaining)} remaining
-                </span>
-                <span style="font-size: 11px; color: #888; margin-left: 8px;">
-                    ⬆️ {upvotes} upvote{"s" if upvotes != 1 else ""} (+{upvotes}m)
-                </span>
+            <div class="timer-badge">
+                ⏱️ {self.format_time_remaining(remaining)} / {timer_label}
+                {f" • ⬆️ +{upvotes}m" if upvotes > 0 else ""}
             </div>
             """
         elif msg.get('media_expired'):
             timer_html = """
-            <div style="margin: 6px 0;">
-                <span class="timer-badge timer-expired">
-                    ⏱️ Photos expired
-                </span>
+            <div class="timer-badge timer-expired">
+                ⏱️ Photos expired
             </div>
             """
 
+        # Media HTML
+        media_html = ""
+        if msg.get('media_ids') and not msg.get('media_expired'):
+            for media_id in msg['media_ids']:
+                upload = self.storage.get_upload(media_id)
+                if upload:
+                    mime = upload['mime_type']
+                    b64 = base64.b64encode(upload['bytes']).decode()
+                    data_url = f"data:{mime};base64,{b64}"
+
+                    if mime.startswith('image'):
+                        media_html += f'<div class="msg-media"><img src="{data_url}"></div>'
+                    elif mime.startswith('video'):
+                        media_html += f'<div class="msg-media">[Video: {upload["filename"]}]</div>'
+
+        # Actions
+        actions_html = f"""
+        <div class="msg-actions">
+            <span class="action-btn {'liked' if is_liked else ''}">{like_icon} {msg.get('like_count', 0)}</span>
+        """
+
+        if msg.get('media_ids') and not msg.get('media_expired') and not is_own:
+            actions_html += '<span class="action-btn upvote-btn">⬆️ +1m</span>'
+
+        if is_own:
+            actions_html += '<span class="action-btn">🗑️</span>'
+
+        actions_html += '</div>'
+
+        # Full message HTML
         st.markdown(f"""
-        <div class="chat-message {own_class}">
-            <div class="chat-header">
-                <span class="chat-username">@{msg['username']}</span>
-                <span class="chat-time">{time_str}</span>
+        <div class="msg-row {row_class}">
+            <div class="msg-bubble {bubble_class}">
+                <div class="msg-sender">@{msg['username']}</div>
+                <div class="msg-text">{msg['content']}</div>
+                {timer_html}
+                {media_html}
+                <div class="msg-time">{time_str} {'✓✓' if is_own else ''}</div>
             </div>
-            <div class="chat-content">{msg['content']}</div>
-            {timer_html}
         </div>
         """, unsafe_allow_html=True)
 
-        if msg.get('media_ids') and not msg.get('media_expired'):
-            cols = st.columns(min(len(msg['media_ids']), 3))
-            for idx, media_id in enumerate(msg['media_ids']):
-                with cols[idx % 3]:
-                    upload = self.storage.get_upload(media_id)
-                    if upload:
-                        mime = upload['mime_type']
-                        b64 = base64.b64encode(upload['bytes']).decode()
-                        data_url = f"data:{mime};base64,{b64}"
-
-                        if mime.startswith('image'):
-                            st.image(data_url, use_container_width=True)
-                        elif mime.startswith('video'):
-                            st.video(data_url)
-
-        col1, col2, col3, col4, col5 = st.columns([1,1,1.5,1,6])
-
-        with col1:
+        # Streamlit buttons below HTML (for actual interactivity)
+        cols = st.columns([1,1,1,1,6])
+        with cols[0]:
             if st.button(f"{like_icon} {msg.get('like_count', 0)}", 
                         key=f"like_{msg['message_id']}",
                         help="Like"):
@@ -527,25 +679,25 @@ class ForumChat:
                 st.rerun()
 
         if msg.get('media_ids') and not msg.get('media_expired') and not is_own:
-            with col2:
+            with cols[1]:
                 if st.button("⬆️ +1m", 
                             key=f"upvote_{msg['message_id']}",
-                            help="Upvote to extend photo timer by 1 minute"):
+                            help="Extend timer"):
                     success = self.storage.upvote_photo_timer(msg['message_id'], current_uid)
                     if success:
-                        st.success("Timer extended! ✅")
+                        st.success("+1 minute! ✅")
                         time.sleep(0.3)
                         st.rerun()
                     else:
-                        st.info("Already upvoted or expired")
+                        st.info("Already upvoted")
 
-        with col3:
-            if st.button("💬 Reply", key=f"reply_{msg['message_id']}"):
+        with cols[2]:
+            if st.button("💬", key=f"reply_{msg['message_id']}", help="Reply"):
                 st.session_state.replying_to = msg['message_id']
                 st.session_state.replying_to_user = msg['username']
                 st.rerun()
 
-        with col4:
+        with cols[3]:
             if is_own:
                 if st.button("🗑️", key=f"del_{msg['message_id']}", help="Delete"):
                     self.storage.delete_message(msg['message_id'], current_uid)
@@ -558,12 +710,13 @@ class ForumChat:
         messages = self.storage.get_chat_history(Config.MAX_MESSAGES)
 
         if not messages:
-            st.info("No messages yet. Be the first! 🎉")
+            st.info("No messages yet. Start the conversation! 🎉")
             return
 
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
         for msg in messages:
             self.render_message(msg)
-            st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -609,12 +762,12 @@ class OnlineSidebar:
         col4.metric("Active", active_timers)
 
         st.sidebar.divider()
-        st.sidebar.caption("⏳ Photos auto-delete after 5 minutes")
-        st.sidebar.caption("⬆️ Upvotes extend timer by +1 minute")
+        st.sidebar.caption("⏳ Photos auto-delete based on timer")
+        st.sidebar.caption("⬆️ Upvotes extend by +1 minute")
 
 
 # ============================================================================
-# GALLERY
+# GALLERY - FIXED
 # ============================================================================
 class Gallery:
     @staticmethod
@@ -627,28 +780,32 @@ class Gallery:
 
         st.subheader("📸 Community Gallery")
 
-        images = []
+        # Get all non-expired images from active timers
+        active_media_ids = set()
         now = time.time()
+        for timer in st.session_state.photo_timers.values():
+            if now < timer['expires_at']:
+                for mid in timer.get('media_ids', []):
+                    active_media_ids.add(mid)
+
+        images = []
         for fid, data in uploads.items():
-            if data['mime_type'].startswith('image'):
-                expired = True
-                for timer in st.session_state.photo_timers.values():
-                    if fid in timer.get('media_ids', []) and now < timer['expires_at']:
-                        expired = False
-                        break
-                if not expired:
-                    images.append((fid, data))
+            if data['mime_type'].startswith('image') and fid in active_media_ids:
+                images.append((fid, data))
 
         if not images:
-            st.info("All photos have expired. New ones coming soon! ⏳")
+            st.info("No active photos. Check the forum for new uploads! ⏳")
             return
 
-        cols = st.columns(4)
+        # Show count
+        st.caption(f"Showing {len(images)} active photo(s)")
+
+        cols = st.columns(min(len(images), 4))
         for idx, (fid, data) in enumerate(images):
             with cols[idx % 4]:
                 b64 = base64.b64encode(data['bytes']).decode()
                 st.image(f"data:{data['mime_type']};base64,{b64}", use_container_width=True)
-                st.caption(f"{data['filename'][:18]}...")
+                st.caption(f"{data['filename'][:20]}...")
 
 
 # ============================================================================
@@ -686,14 +843,14 @@ class ForumApp:
 
             st.divider()
             st.caption("💡 Session-based: data clears on refresh")
-            st.caption("⏱️ Photos expire after 5 minutes")
+            st.caption("⏱️ Choose photo timer at upload")
 
     def render_forum(self):
         st.markdown("""
         <div style="text-align:center; padding:10px 0 20px;">
             <h1>💬 MemoryVault Forum</h1>
             <p style="color:#666; font-size:14px;">
-                Share photos & videos • ⏱️ 5 min timer • ⬆️ Upvote to extend
+                WhatsApp-style chat • Choose photo timer • Upvote to extend
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -706,29 +863,33 @@ class ForumApp:
         Gallery.render()
 
     def render_about(self):
-        st.title("ℹ️ About")
+        st.title("ℹ️ About MemoryVault Forum")
         st.markdown("""
-        ### 🌟 MemoryVault Forum v8.2.0
+        ### 🌟 v8.3.0 Features
 
-        **Features:**
-        - **Instant Guest Access**: No registration, just pick a name
-        - **Ephemeral Photos**: All photos auto-delete after 5 minutes
-        - **Community Upvotes**: Users can upvote photos to extend timer (+1 min each)
-        - **Live Chat**: Real-time forum with multiple concurrent users
-        - **Live Counter**: See exactly who's online right now
-        - **Cloud Native**: Session-only storage, no disk writes
+        **WhatsApp-Style Chat:**
+        - Your messages appear on the **right** (green bubbles)
+        - Others appear on the **left** (white bubbles)
+        - Read receipts (✓✓) on own messages
 
-        **How it works:**
-        1. Join with any display name
-        2. Post messages with photos/videos
-        3. Photos appear for 5 minutes then auto-hide
-        4. Other users can upvote to extend visibility
-        5. Everything disappears when you close the tab
+        **Photo Timer Selection:**
+        - Choose timer **before** uploading: 1min, 3min, 5min, 10min, 30min, 1hour
+        - Timer shown on each photo
+        - Photos auto-hide when timer expires
+
+        **Community Upvotes:**
+        - Click ⬆️ to extend any photo by +1 minute
+        - Each user can upvote once per photo
+
+        **Live Features:**
+        - Real-time online counter
+        - Active guest list
+        - Gallery shows only non-expired photos
 
         **Privacy:**
         - Zero persistence
-        - No tracking
-        - Automatic cleanup
+        - Session-only storage
+        - Perfect for Streamlit Cloud
         """)
 
         st.info(f"📊 Currently online: {self.storage.get_online_count()} guests")
