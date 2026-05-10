@@ -1,6 +1,7 @@
 """
-MEMORYVAULT FORUM PRO v8.3.0
-WhatsApp-style Chat + Upload Timer Selection + Fixed Gallery
+MEMORYVAULT CHAT ROOMS v9.0.0
+Multi-Room Chat with Working Photos, Replies & Timer
+Uses Streamlit native chat elements + BytesIO image display
 """
 import streamlit as st
 from pathlib import Path
@@ -17,23 +18,61 @@ import io
 warnings.filterwarnings('ignore')
 
 # ============================================================================
-# SESSION STORAGE
+# CONFIGURATION
+# ============================================================================
+class Config:
+    APP_NAME = "MemoryVault Chat"
+    VERSION = "9.0.0"
+    MAX_MESSAGE_LENGTH = 2000
+    MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB for stability
+    SUPPORTED_VIDEO_FORMATS = ['.mp4','.mov','.avi','.mkv','.webm','.wmv','.flv','.m4v']
+    IMAGE_EXTENSIONS = {'.jpg','.jpeg','.png','.gif','.bmp','.webp','.tiff'}
+    ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | set(SUPPORTED_VIDEO_FORMATS)
+    THUMBNAIL_SIZE = (600, 600)
+    MAX_MESSAGES = 500
+    TIMER_OPTIONS = {
+        "1 min": 60,
+        "3 min": 180,
+        "5 min": 300,
+        "10 min": 600,
+        "30 min": 1800,
+        "1 hour": 3600,
+    }
+    DEFAULT_ROOMS = [
+        "🌟 General",
+        "📸 Photo Sharing", 
+        "🎉 Events",
+        "💬 Random",
+        "🔒 Private"
+    ]
+
+
+# ============================================================================
+# SESSION STORAGE - MULTI-ROOM
 # ============================================================================
 class SessionStorage:
     def __init__(self):
         defaults = {
             'session_uploads': {},
-            'chat_messages': [],
+            'chat_messages': {},  # room_name -> list of messages
             'guest_users': {},
             'active_sessions': set(),
             'message_counter': 0,
             'photo_timers': {},
             'user_upvotes': set(),
             'deleted_messages': set(),
+            'current_room': Config.DEFAULT_ROOMS[0],
+            'replying_to': None,
+            'replying_to_user': None,
         }
         for key, val in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = val
+
+        # Initialize rooms
+        for room in Config.DEFAULT_ROOMS:
+            if room not in st.session_state.chat_messages:
+                st.session_state.chat_messages[room] = []
 
     def store_upload(self, file_id: str, file_bytes: bytes, filename: str, mime_type: str):
         st.session_state.session_uploads[file_id] = {
@@ -48,25 +87,31 @@ class SessionStorage:
     def get_upload(self, file_id: str) -> Optional[Dict]:
         return st.session_state.session_uploads.get(file_id)
 
-    def add_chat_message(self, user_id: str, username: str, content: str, 
+    def add_chat_message(self, room: str, user_id: str, username: str, content: str, 
                         media_ids: List[str] = None, reply_to: Optional[str] = None,
+                        reply_to_user: Optional[str] = None,
                         timer_duration: int = 300):
         st.session_state.message_counter += 1
-        msg_id = f"msg_{st.session_state.message_counter}_{uuid.uuid4().hex[:8]}"
+        msg_id = f"msg_{st.session_state.message_counter}_{uuid.uuid4().hex[:6]}"
 
         msg = {
             'message_id': msg_id,
+            'room': room,
             'user_id': user_id,
             'username': username,
             'content': content,
             'media_ids': media_ids or [],
             'reply_to': reply_to,
+            'reply_to_user': reply_to_user,
             'timestamp': datetime.datetime.now().isoformat(),
             'likes': set(),
             'edited': False,
             'deleted': False
         }
-        st.session_state.chat_messages.append(msg)
+
+        if room not in st.session_state.chat_messages:
+            st.session_state.chat_messages[room] = []
+        st.session_state.chat_messages[room].append(msg)
 
         if media_ids:
             st.session_state.photo_timers[msg_id] = {
@@ -80,22 +125,25 @@ class SessionStorage:
             }
         return msg_id
 
-    def get_chat_history(self, limit: int = 100) -> List[Dict]:
+    def get_room_messages(self, room: str, limit: int = 200) -> List[Dict]:
+        if room not in st.session_state.chat_messages:
+            return []
+
         messages = []
         now = time.time()
 
-        for msg in reversed(st.session_state.chat_messages[-limit:]):
+        for msg in st.session_state.chat_messages[room][-limit:]:
             if msg['message_id'] in st.session_state.deleted_messages:
                 continue
 
+            msg = msg.copy()
             timer = st.session_state.photo_timers.get(msg['message_id'])
+
             if timer and now > timer['expires_at']:
-                msg = msg.copy()
                 msg['media_expired'] = True
                 msg['expired_media_ids'] = msg['media_ids']
                 msg['media_ids'] = []
             else:
-                msg = msg.copy()
                 msg['media_expired'] = False
                 if timer:
                     msg['time_remaining'] = max(0, int(timer['expires_at'] - now))
@@ -104,7 +152,15 @@ class SessionStorage:
 
             msg['like_count'] = len(msg['likes'])
             messages.append(msg)
+
         return messages
+
+    def get_message_by_id(self, msg_id: str) -> Optional[Dict]:
+        for room_msgs in st.session_state.chat_messages.values():
+            for msg in room_msgs:
+                if msg['message_id'] == msg_id:
+                    return msg
+        return None
 
     def upvote_photo_timer(self, message_id: str, user_id: str) -> bool:
         vote_key = (user_id, message_id)
@@ -123,28 +179,30 @@ class SessionStorage:
         return True
 
     def like_message(self, message_id: str, user_id: str):
-        for msg in st.session_state.chat_messages:
-            if msg['message_id'] == message_id:
-                if user_id in msg['likes']:
-                    msg['likes'].remove(user_id)
-                    return False
-                else:
-                    msg['likes'].add(user_id)
-                    return True
+        for room_msgs in st.session_state.chat_messages.values():
+            for msg in room_msgs:
+                if msg['message_id'] == message_id:
+                    if user_id in msg['likes']:
+                        msg['likes'].remove(user_id)
+                        return False
+                    else:
+                        msg['likes'].add(user_id)
+                        return True
         return None
 
     def delete_message(self, message_id: str, user_id: str) -> bool:
-        for msg in st.session_state.chat_messages:
-            if msg['message_id'] == message_id and msg['user_id'] == user_id:
-                st.session_state.deleted_messages.add(message_id)
-                timer = st.session_state.photo_timers.get(message_id)
-                if timer:
-                    timer['expires_at'] = 0
-                return True
+        for room_msgs in st.session_state.chat_messages.values():
+            for msg in room_msgs:
+                if msg['message_id'] == message_id and msg['user_id'] == user_id:
+                    st.session_state.deleted_messages.add(message_id)
+                    timer = st.session_state.photo_timers.get(message_id)
+                    if timer:
+                        timer['expires_at'] = 0
+                    return True
         return False
 
     def register_guest(self, username: str) -> str:
-        user_id = f"guest_{uuid.uuid4().hex[:12]}"
+        user_id = f"guest_{uuid.uuid4().hex[:10]}"
         st.session_state.guest_users[user_id] = {
             'user_id': user_id,
             'username': username,
@@ -181,35 +239,9 @@ class SessionStorage:
                 users.append(user)
         return sorted(users, key=lambda x: x['last_active'], reverse=True)
 
-    def get_user(self, user_id: str) -> Optional[Dict]:
-        return st.session_state.guest_users.get(user_id)
-
 
 # ============================================================================
-# CONFIG
-# ============================================================================
-class Config:
-    APP_NAME = "MemoryVault Forum Pro"
-    VERSION = "8.3.0"
-    MAX_MESSAGE_LENGTH = 2000
-    MAX_FILE_SIZE = 50 * 1024 * 1024
-    SUPPORTED_VIDEO_FORMATS = ['.mp4','.mov','.avi','.mkv','.webm','.wmv','.flv','.m4v']
-    IMAGE_EXTENSIONS = {'.jpg','.jpeg','.png','.gif','.bmp','.webp','.tiff'}
-    ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | set(SUPPORTED_VIDEO_FORMATS)
-    THUMBNAIL_SIZE = (400, 400)
-    MAX_MESSAGES = 200
-    TIMER_OPTIONS = {
-        "1 minute": 60,
-        "3 minutes": 180,
-        "5 minutes": 300,
-        "10 minutes": 600,
-        "30 minutes": 1800,
-        "1 hour": 3600,
-    }
-
-
-# ============================================================================
-# MEDIA PROCESSOR
+# MEDIA PROCESSOR - Using BytesIO for reliable display
 # ============================================================================
 class MediaProcessor:
     @staticmethod
@@ -241,18 +273,7 @@ class MediaProcessor:
             img = Image.open(io.BytesIO(file_bytes))
             img = ImageOps.exif_transpose(img)
 
-            thumb = img.copy()
-            thumb.thumbnail(Config.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            thumb.save(buf, format='JPEG', quality=85)
-            thumb_b64 = base64.b64encode(buf.getvalue()).decode()
-
-            hd = img.copy()
-            hd.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
-            hd_buf = io.BytesIO()
-            hd.save(hd_buf, format='JPEG', quality=90)
-            hd_b64 = base64.b64encode(hd_buf.getvalue()).decode()
-
+            # Store raw bytes for reliable display
             storage = SessionStorage()
             storage.store_upload(file_id, file_bytes, filename, f"image/{ext.replace('.', '')}")
 
@@ -261,9 +282,7 @@ class MediaProcessor:
                 'type': 'image',
                 'filename': filename,
                 'dimensions': img.size,
-                'thumbnail': f"data:image/jpeg;base64,{thumb_b64}",
-                'hd_url': f"data:image/jpeg;base64,{hd_b64}",
-                'size': file_size
+                'size': len(file_bytes)
             }
         except Exception as e:
             st.error(f"Image error: {e}")
@@ -277,32 +296,49 @@ class MediaProcessor:
             'file_id': file_id,
             'type': 'video',
             'filename': filename,
-            'thumbnail': None,
-            'hd_url': None,
             'size': len(file_bytes)
         }
 
+    @staticmethod
+    def get_image_bytes(file_id: str) -> Optional[bytes]:
+        upload = SessionStorage().get_upload(file_id)
+        if upload and upload['mime_type'].startswith('image'):
+            return upload['bytes']
+        return None
+
+    @staticmethod
+    def get_video_bytes(file_id: str) -> Optional[bytes]:
+        upload = SessionStorage().get_upload(file_id)
+        if upload and upload['mime_type'].startswith('video'):
+            return upload['bytes']
+        return None
+
 
 # ============================================================================
-# CSS - WhatsApp Style
+# CSS
 # ============================================================================
 def inject_css():
     st.markdown("""
     <style>
-    /* WhatsApp-style chat container */
+    /* Main layout */
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+        max-width: 1000px;
+    }
+
+    /* Chat container */
     .chat-container {
-        max-width: 900px;
-        margin: 0 auto;
-        background: #e5ddd5;
-        border-radius: 12px;
-        padding: 10px;
-        min-height: 60vh;
+        background: #f0f2f5;
+        border-radius: 16px;
+        padding: 16px;
+        margin-bottom: 20px;
     }
 
     /* Message bubbles */
     .msg-row {
         display: flex;
-        margin-bottom: 8px;
+        margin-bottom: 12px;
         width: 100%;
     }
     .msg-row.own {
@@ -313,28 +349,29 @@ def inject_css():
     }
 
     .msg-bubble {
-        max-width: 70%;
-        padding: 8px 12px;
-        border-radius: 12px;
+        max-width: 75%;
+        padding: 10px 14px;
+        border-radius: 14px;
         position: relative;
         word-wrap: break-word;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
     .msg-bubble.own {
-        background: #dcf8c6;
-        border-bottom-right-radius: 2px;
+        background: #d9fdd3;
+        border-bottom-right-radius: 4px;
         margin-left: auto;
     }
     .msg-bubble.other {
         background: #ffffff;
-        border-bottom-left-radius: 2px;
+        border-bottom-left-radius: 4px;
         margin-right: auto;
     }
 
     .msg-sender {
         font-size: 12px;
-        font-weight: 600;
-        color: #667eea;
-        margin-bottom: 2px;
+        font-weight: 700;
+        color: #1f7a1f;
+        margin-bottom: 3px;
     }
     .msg-text {
         font-size: 14px;
@@ -344,28 +381,41 @@ def inject_css():
     }
     .msg-time {
         font-size: 10px;
-        color: #888;
+        color: #999;
         text-align: right;
         margin-top: 2px;
     }
+
+    /* Reply reference */
+    .msg-reply {
+        background: rgba(0,0,0,0.05);
+        border-left: 3px solid #667eea;
+        padding: 4px 8px;
+        border-radius: 6px;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: #555;
+    }
+
+    /* Media */
     .msg-media {
         margin: 6px 0;
-        border-radius: 8px;
+        border-radius: 10px;
         overflow: hidden;
     }
     .msg-media img {
         max-width: 100%;
-        max-height: 300px;
-        border-radius: 8px;
-        cursor: pointer;
+        max-height: 350px;
+        border-radius: 10px;
+        display: block;
     }
 
-    /* Timer badge inside bubble */
+    /* Timer badge */
     .timer-badge {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        background: rgba(255,152,0,0.15);
+        background: rgba(255,152,0,0.12);
         color: #e65100;
         padding: 2px 8px;
         border-radius: 10px;
@@ -374,42 +424,19 @@ def inject_css():
         margin: 4px 0;
     }
     .timer-expired {
-        background: rgba(244,67,54,0.15);
+        background: rgba(244,67,54,0.12);
         color: #c62828;
     }
 
-    /* Action buttons row */
+    /* Actions */
     .msg-actions {
         display: flex;
-        gap: 8px;
+        gap: 6px;
         margin-top: 4px;
-        font-size: 12px;
-    }
-    .action-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        color: #666;
-        padding: 2px 6px;
-        border-radius: 4px;
-        transition: all 0.2s;
-    }
-    .action-btn:hover {
-        background: rgba(0,0,0,0.05);
-        color: #333;
-    }
-    .action-btn.liked {
-        color: #ff4b4b;
-    }
-    .upvote-btn {
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        color: white !important;
-        border-radius: 12px;
-        padding: 2px 10px;
-        font-size: 11px;
+        flex-wrap: wrap;
     }
 
-    /* Online sidebar */
+    /* Online badge */
     .online-badge {
         display: inline-flex;
         align-items: center;
@@ -440,12 +467,10 @@ def inject_css():
         max-width: 500px;
     }
 
-    /* Input area */
-    .input-area {
-        background: #f0f0f0;
-        border-radius: 12px;
-        padding: 12px;
-        margin-top: 10px;
+    /* Room selector */
+    .room-active {
+        background: #667eea !important;
+        color: white !important;
     }
 
     @keyframes pulse {
@@ -454,10 +479,18 @@ def inject_css():
         100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
     }
 
-    /* Hide default streamlit form margins */
+    /* Hide form borders */
     .stForm {
         border: none !important;
         padding: 0 !important;
+        background: transparent !important;
+    }
+
+    /* Button styling */
+    .stButton button {
+        border-radius: 20px !important;
+        font-size: 12px !important;
+        padding: 2px 12px !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -471,8 +504,8 @@ class GuestAuth:
     def render_login():
         st.markdown("""
         <div class="guest-card">
-            <h1>👋 MemoryVault Forum</h1>
-            <p style="font-size:16px; opacity:0.9;">Join the conversation instantly.<br>No account needed.</p>
+            <h1>👋 MemoryVault Chat</h1>
+            <p style="font-size:16px; opacity:0.9;">Join chat rooms instantly.<br>No account needed.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -483,7 +516,7 @@ class GuestAuth:
                                    max_chars=30,
                                    key="guest_username_input")
 
-            if st.button("🚀 Join Forum", use_container_width=True, type="primary"):
+            if st.button("🚀 Join Chat", use_container_width=True, type="primary"):
                 if username and len(username.strip()) >= 2:
                     storage = SessionStorage()
                     user_id = storage.register_guest(username.strip())
@@ -516,42 +549,51 @@ class GuestAuth:
 
 
 # ============================================================================
-# FORUM CHAT - WhatsApp Style
+# CHAT ROOM COMPONENT
 # ============================================================================
-class ForumChat:
-    def __init__(self):
+class ChatRoom:
+    def __init__(self, room_name: str):
+        self.room_name = room_name
         self.storage = SessionStorage()
         self.processor = MediaProcessor()
 
-    def render_chat_input(self):
-        st.markdown("<div class='input-area'>", unsafe_allow_html=True)
+    def render_input(self):
+        """Render message input with file upload and timer"""
 
-        with st.form(key="chat_form", clear_on_submit=True):
-            message_text = st.text_area("Message", 
-                                       placeholder="Type a message...",
-                                       max_chars=Config.MAX_MESSAGE_LENGTH,
-                                       height=60,
-                                       label_visibility="collapsed")
+        # Reply indicator
+        if st.session_state.get('replying_to'):
+            reply_msg = self.storage.get_message_by_id(st.session_state.replying_to)
+            if reply_msg:
+                st.info(f"💬 Replying to @{reply_msg['username']}: {reply_msg['content'][:60]}...")
+                if st.button("❌ Cancel Reply", key="cancel_reply"):
+                    st.session_state.replying_to = None
+                    st.session_state.replying_to_user = None
+                    st.rerun()
 
-            col1, col2 = st.columns([3,1])
+        with st.form(key=f"chat_form_{self.room_name}", clear_on_submit=True):
+            col1, col2 = st.columns([4,1])
             with col1:
-                uploaded_files = st.file_uploader(
-                    "📎 Photos/Videos", 
-                    accept_multiple_files=True,
-                    type=list(Config.ALLOWED_EXTENSIONS),
-                    label_visibility="collapsed"
-                )
+                message_text = st.text_area("Message", 
+                                           placeholder="Type a message...",
+                                           max_chars=Config.MAX_MESSAGE_LENGTH,
+                                           height=60,
+                                           label_visibility="collapsed")
             with col2:
                 timer_choice = st.selectbox(
-                    "⏱️ Timer",
+                    "Timer",
                     options=list(Config.TIMER_OPTIONS.keys()),
-                    index=2,  # Default 5 minutes
-                    help="How long photos stay visible"
+                    index=2,
+                    label_visibility="collapsed"
                 )
 
-            submitted = st.form_submit_button("📤 Send", use_container_width=True, type="primary")
+            uploaded_files = st.file_uploader(
+                "📎 Attach photos/videos",
+                accept_multiple_files=True,
+                type=list(Config.ALLOWED_EXTENSIONS),
+                label_visibility="collapsed"
+            )
 
-        st.markdown("</div>", unsafe_allow_html=True)
+            submitted = st.form_submit_button("📤 Send", use_container_width=True, type="primary")
 
         if submitted:
             if not message_text.strip() and not uploaded_files:
@@ -570,19 +612,29 @@ class ForumChat:
             media_ids = [m['file_id'] for m in media_metadata]
             timer_seconds = Config.TIMER_OPTIONS[timer_choice]
 
+            reply_to = st.session_state.get('replying_to')
+            reply_to_user = st.session_state.get('replying_to_user')
+
             self.storage.add_chat_message(
+                room=self.room_name,
                 user_id=user_id,
                 username=username,
                 content=message_text.strip(),
                 media_ids=media_ids,
+                reply_to=reply_to,
+                reply_to_user=reply_to_user,
                 timer_duration=timer_seconds
             )
 
+            # Clear reply state
+            st.session_state.replying_to = None
+            st.session_state.replying_to_user = None
+
             st.success("Sent! ✅")
-            time.sleep(0.3)
+            time.sleep(0.2)
             st.rerun()
 
-    def format_time_remaining(self, seconds: int) -> str:
+    def format_time(self, seconds: int) -> str:
         if seconds <= 0:
             return "Expired"
         mins, secs = divmod(seconds, 60)
@@ -605,18 +657,25 @@ class ForumChat:
         is_liked = current_uid in msg.get('likes', set())
         like_icon = "❤️" if is_liked else "🤍"
 
+        # Reply reference HTML
+        reply_html = ""
+        if msg.get('reply_to') and msg.get('reply_to_user'):
+            reply_html = f"""
+            <div class="msg-reply">
+                ↩️ Replying to @{msg['reply_to_user']}
+            </div>
+            """
+
         # Timer HTML
         timer_html = ""
         if msg.get('media_ids') and not msg.get('media_expired'):
             remaining = msg.get('time_remaining', 0)
             upvotes = msg.get('upvote_count', 0)
-            timer_choice = msg.get('timer_choice', 300)
-            timer_label = [k for k, v in Config.TIMER_OPTIONS.items() if v == timer_choice]
-            timer_label = timer_label[0] if timer_label else "5 min"
+            timer_label = self.format_time(msg.get('timer_choice', 300))
 
             timer_html = f"""
             <div class="timer-badge">
-                ⏱️ {self.format_time_remaining(remaining)} / {timer_label}
+                ⏱️ {self.format_time(remaining)} / {timer_label}
                 {f" • ⬆️ +{upvotes}m" if upvotes > 0 else ""}
             </div>
             """
@@ -627,40 +686,17 @@ class ForumChat:
             </div>
             """
 
-        # Media HTML
+        # Media HTML - using placeholder, actual display via st.image below
         media_html = ""
         if msg.get('media_ids') and not msg.get('media_expired'):
-            for media_id in msg['media_ids']:
-                upload = self.storage.get_upload(media_id)
-                if upload:
-                    mime = upload['mime_type']
-                    b64 = base64.b64encode(upload['bytes']).decode()
-                    data_url = f"data:{mime};base64,{b64}"
+            media_html = '<div class="msg-media">[Media attached]</div>'
 
-                    if mime.startswith('image'):
-                        media_html += f'<div class="msg-media"><img src="{data_url}"></div>'
-                    elif mime.startswith('video'):
-                        media_html += f'<div class="msg-media">[Video: {upload["filename"]}]</div>'
-
-        # Actions
-        actions_html = f"""
-        <div class="msg-actions">
-            <span class="action-btn {'liked' if is_liked else ''}">{like_icon} {msg.get('like_count', 0)}</span>
-        """
-
-        if msg.get('media_ids') and not msg.get('media_expired') and not is_own:
-            actions_html += '<span class="action-btn upvote-btn">⬆️ +1m</span>'
-
-        if is_own:
-            actions_html += '<span class="action-btn">🗑️</span>'
-
-        actions_html += '</div>'
-
-        # Full message HTML
+        # Build bubble HTML
         st.markdown(f"""
         <div class="msg-row {row_class}">
             <div class="msg-bubble {bubble_class}">
                 <div class="msg-sender">@{msg['username']}</div>
+                {reply_html}
                 <div class="msg-text">{msg['content']}</div>
                 {timer_html}
                 {media_html}
@@ -669,11 +705,28 @@ class ForumChat:
         </div>
         """, unsafe_allow_html=True)
 
-        # Streamlit buttons below HTML (for actual interactivity)
+        # Display actual media using st.image/st.video (reliable method)
+        if msg.get('media_ids') and not msg.get('media_expired'):
+            media_cols = st.columns(min(len(msg['media_ids']), 3))
+            for idx, media_id in enumerate(msg['media_ids']):
+                with media_cols[idx % 3]:
+                    upload = self.storage.get_upload(media_id)
+                    if upload:
+                        mime = upload['mime_type']
+                        if mime.startswith('image'):
+                            # Use BytesIO for reliable display [^32^]
+                            img_bytes = io.BytesIO(upload['bytes'])
+                            st.image(img_bytes, use_container_width=True)
+                        elif mime.startswith('video'):
+                            vid_bytes = io.BytesIO(upload['bytes'])
+                            st.video(vid_bytes)
+
+        # Action buttons
         cols = st.columns([1,1,1,1,6])
+
         with cols[0]:
             if st.button(f"{like_icon} {msg.get('like_count', 0)}", 
-                        key=f"like_{msg['message_id']}",
+                        key=f"like_{msg['message_id']}_{self.room_name}",
                         help="Like"):
                 self.storage.like_message(msg['message_id'], current_uid)
                 st.rerun()
@@ -681,42 +734,55 @@ class ForumChat:
         if msg.get('media_ids') and not msg.get('media_expired') and not is_own:
             with cols[1]:
                 if st.button("⬆️ +1m", 
-                            key=f"upvote_{msg['message_id']}",
+                            key=f"upvote_{msg['message_id']}_{self.room_name}",
                             help="Extend timer"):
                     success = self.storage.upvote_photo_timer(msg['message_id'], current_uid)
                     if success:
-                        st.success("+1 minute! ✅")
-                        time.sleep(0.3)
+                        st.toast("Timer extended! +1 minute ✅")
+                        time.sleep(0.2)
                         st.rerun()
                     else:
-                        st.info("Already upvoted")
+                        st.toast("Already upvoted or expired")
 
         with cols[2]:
-            if st.button("💬", key=f"reply_{msg['message_id']}", help="Reply"):
+            if st.button("↩️ Reply", 
+                        key=f"reply_{msg['message_id']}_{self.room_name}", 
+                        help="Reply to this message"):
                 st.session_state.replying_to = msg['message_id']
                 st.session_state.replying_to_user = msg['username']
                 st.rerun()
 
         with cols[3]:
             if is_own:
-                if st.button("🗑️", key=f"del_{msg['message_id']}", help="Delete"):
+                if st.button("🗑️", 
+                            key=f"del_{msg['message_id']}_{self.room_name}", 
+                            help="Delete"):
                     self.storage.delete_message(msg['message_id'], current_uid)
                     st.rerun()
 
-        if st.session_state.get('replying_to') == msg['message_id']:
-            st.info(f"Replying to @{msg['username']}")
-
-    def render_chat_history(self):
-        messages = self.storage.get_chat_history(Config.MAX_MESSAGES)
+    def render_messages(self):
+        messages = self.storage.get_room_messages(self.room_name, Config.MAX_MESSAGES)
 
         if not messages:
-            st.info("No messages yet. Start the conversation! 🎉")
+            st.info(f"No messages in {self.room_name} yet. Start the conversation! 🎉")
             return
 
         st.markdown('<div class="chat-container">', unsafe_allow_html=True)
         for msg in messages:
             self.render_message(msg)
+            st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
+
+    def render(self):
+        st.subheader(f"💬 {self.room_name}")
+
+        # Message count
+        msg_count = len(st.session_state.chat_messages.get(self.room_name, []))
+        st.caption(f"{msg_count} message(s)")
+
+        self.render_messages()
+        st.divider()
+        self.render_input()
 
 
 # ============================================================================
@@ -732,7 +798,7 @@ class OnlineSidebar:
         st.sidebar.markdown(f"""
         <div class="online-badge">
             <div class="online-dot"></div>
-            <span>{count} online now</span>
+            <span>{count} online</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -747,19 +813,25 @@ class OnlineSidebar:
 
         st.sidebar.divider()
 
+        # Room list with message counts
+        st.sidebar.subheader("📋 Rooms")
+        for room in Config.DEFAULT_ROOMS:
+            msg_count = len(st.session_state.chat_messages.get(room, []))
+            active = "✅" if room == st.session_state.get('current_room') else ""
+            st.sidebar.caption(f"{active} {room} ({msg_count})")
+
+        st.sidebar.divider()
+
+        # Stats
         total_guests = len(st.session_state.guest_users)
-        total_msgs = len(st.session_state.chat_messages)
+        total_msgs = sum(len(msgs) for msgs in st.session_state.chat_messages.values())
         total_uploads = len(st.session_state.session_uploads)
-        active_timers = sum(1 for t in st.session_state.photo_timers.values() 
-                          if time.time() < t['expires_at'])
 
         col1, col2 = st.sidebar.columns(2)
         col1.metric("Guests", total_guests)
         col2.metric("Posts", total_msgs)
 
-        col3, col4 = st.sidebar.columns(2)
-        col3.metric("Media", total_uploads)
-        col4.metric("Active", active_timers)
+        st.sidebar.metric("Media", total_uploads)
 
         st.sidebar.divider()
         st.sidebar.caption("⏳ Photos auto-delete based on timer")
@@ -775,12 +847,12 @@ class Gallery:
         uploads = st.session_state.session_uploads
 
         if not uploads:
-            st.info("No photos shared yet. Post in the forum! 📸")
+            st.info("No photos shared yet. Post in a chat room! 📸")
             return
 
         st.subheader("📸 Community Gallery")
 
-        # Get all non-expired images from active timers
+        # Get all non-expired media IDs across all rooms
         active_media_ids = set()
         now = time.time()
         for timer in st.session_state.photo_timers.values():
@@ -789,39 +861,51 @@ class Gallery:
                     active_media_ids.add(mid)
 
         images = []
+        videos = []
         for fid, data in uploads.items():
-            if data['mime_type'].startswith('image') and fid in active_media_ids:
-                images.append((fid, data))
+            if fid in active_media_ids:
+                if data['mime_type'].startswith('image'):
+                    images.append((fid, data))
+                elif data['mime_type'].startswith('video'):
+                    videos.append((fid, data))
 
-        if not images:
-            st.info("No active photos. Check the forum for new uploads! ⏳")
+        if not images and not videos:
+            st.info("No active media. Check chat rooms for new uploads! ⏳")
             return
 
-        # Show count
-        st.caption(f"Showing {len(images)} active photo(s)")
+        st.caption(f"Showing {len(images)} photo(s) and {len(videos)} video(s)")
 
-        cols = st.columns(min(len(images), 4))
-        for idx, (fid, data) in enumerate(images):
-            with cols[idx % 4]:
-                b64 = base64.b64encode(data['bytes']).decode()
-                st.image(f"data:{data['mime_type']};base64,{b64}", use_container_width=True)
-                st.caption(f"{data['filename'][:20]}...")
+        # Images grid
+        if images:
+            st.markdown("**Photos**")
+            cols = st.columns(min(len(images), 4))
+            for idx, (fid, data) in enumerate(images):
+                with cols[idx % 4]:
+                    img_bytes = io.BytesIO(data['bytes'])
+                    st.image(img_bytes, use_container_width=True)
+                    st.caption(f"{data['filename'][:20]}...")
+
+        # Videos
+        if videos:
+            st.markdown("**Videos**")
+            for fid, data in videos:
+                vid_bytes = io.BytesIO(data['bytes'])
+                st.video(vid_bytes)
+                st.caption(f"{data['filename']}")
 
 
 # ============================================================================
 # MAIN APP
 # ============================================================================
-class ForumApp:
+class ChatApp:
     def __init__(self):
-        st.set_page_config(page_title=Config.APP_NAME, layout="wide")
+        st.set_page_config(
+            page_title=Config.APP_NAME, 
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
         inject_css()
-        self.chat = ForumChat()
         self.storage = SessionStorage()
-
-        if 'replying_to' not in st.session_state:
-            st.session_state.replying_to = None
-        if 'replying_to_user' not in st.session_state:
-            st.session_state.replying_to_user = None
 
     def render_sidebar(self):
         with st.sidebar:
@@ -830,13 +914,24 @@ class ForumApp:
 
             OnlineSidebar.render()
 
-            st.subheader("Navigation")
-            page = st.radio("Go to", ["💬 Forum", "📸 Gallery", "ℹ️ About"], key="nav_page")
+            st.subheader("🏠 Room Selection")
+            room = st.radio(
+                "Choose a room",
+                options=Config.DEFAULT_ROOMS,
+                index=Config.DEFAULT_ROOMS.index(st.session_state.get('current_room', Config.DEFAULT_ROOMS[0])),
+                key="room_selector"
+            )
+
+            if room != st.session_state.get('current_room'):
+                st.session_state.current_room = room
+                st.session_state.replying_to = None
+                st.session_state.replying_to_user = None
+                st.rerun()
 
             st.divider()
             st.subheader("Your Profile")
             st.write(f"👤 @{st.session_state.get('current_username', 'Guest')}")
-            st.write(f"🆔 {st.session_state.get('current_user_id', '')[:16]}...")
+            st.write(f"🆔 ...{st.session_state.get('current_user_id', '')[-8:]}")
 
             if st.button("🚪 Leave", use_container_width=True):
                 GuestAuth.logout()
@@ -845,51 +940,42 @@ class ForumApp:
             st.caption("💡 Session-based: data clears on refresh")
             st.caption("⏱️ Choose photo timer at upload")
 
-    def render_forum(self):
-        st.markdown("""
-        <div style="text-align:center; padding:10px 0 20px;">
-            <h1>💬 MemoryVault Forum</h1>
-            <p style="color:#666; font-size:14px;">
-                WhatsApp-style chat • Choose photo timer • Upvote to extend
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        self.chat.render_chat_input()
-        st.divider()
-        self.chat.render_chat_history()
+    def render_chat(self):
+        room = st.session_state.get('current_room', Config.DEFAULT_ROOMS[0])
+        chat = ChatRoom(room)
+        chat.render()
 
     def render_gallery(self):
         Gallery.render()
 
     def render_about(self):
-        st.title("ℹ️ About MemoryVault Forum")
+        st.title("ℹ️ About MemoryVault Chat")
         st.markdown("""
-        ### 🌟 v8.3.0 Features
+        ### 🌟 v9.0.0 Features
+
+        **Multi-Room Chat:**
+        - Join different themed rooms (General, Photo Sharing, Events, etc.)
+        - Each room has its own message history
+        - Switch rooms instantly
 
         **WhatsApp-Style Chat:**
-        - Your messages appear on the **right** (green bubbles)
-        - Others appear on the **left** (white bubbles)
-        - Read receipts (✓✓) on own messages
+        - Your messages on the right (green), others on the left (white)
+        - Reply to specific messages with context
+        - Like and upvote system
 
-        **Photo Timer Selection:**
-        - Choose timer **before** uploading: 1min, 3min, 5min, 10min, 30min, 1hour
-        - Timer shown on each photo
-        - Photos auto-hide when timer expires
+        **Photo Timer & Upvotes:**
+        - Choose timer before uploading (1 min to 1 hour)
+        - Community upvotes extend timer by +1 minute
+        - Photos auto-hide when expired
 
-        **Community Upvotes:**
-        - Click ⬆️ to extend any photo by +1 minute
-        - Each user can upvote once per photo
+        **Reliable Photo Display:**
+        - Uses BytesIO for 100% reliable image rendering
+        - Works on Streamlit Cloud without issues
 
         **Live Features:**
         - Real-time online counter
         - Active guest list
-        - Gallery shows only non-expired photos
-
-        **Privacy:**
-        - Zero persistence
-        - Session-only storage
-        - Perfect for Streamlit Cloud
+        - Gallery shows only active photos
         """)
 
         st.info(f"📊 Currently online: {self.storage.get_online_count()} guests")
@@ -900,12 +986,14 @@ class ForumApp:
 
         self.render_sidebar()
 
-        page = st.session_state.get('nav_page', '💬 Forum')
-        if page == "💬 Forum":
-            self.render_forum()
-        elif page == "📸 Gallery":
+        # Main content area
+        tab1, tab2, tab3 = st.tabs(["💬 Chat Room", "📸 Gallery", "ℹ️ About"])
+
+        with tab1:
+            self.render_chat()
+        with tab2:
             self.render_gallery()
-        else:
+        with tab3:
             self.render_about()
 
 
@@ -913,7 +1001,7 @@ class ForumApp:
 # MAIN
 # ============================================================================
 def main():
-    app = ForumApp()
+    app = ChatApp()
     app.run()
 
 if __name__ == "__main__":
