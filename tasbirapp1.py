@@ -3,6 +3,400 @@ COMPREHENSIVE WEB PHOTO & VIDEO ALBUM APPLICATION
 Version: 3.1.0 - Enhanced with Video Streaming & Password Protection
 Features: Table of Contents, Image/Video Gallery, Comments, Ratings, Metadata Management, Search, Password Auth
 """
+
+# ============================================================================
+# MODERN UI CSS INJECTION
+# ============================================================================
+MODERN_CSS = """
+<style>
+    /* Modern Color Palette & Base */
+    :root {
+        --primary: #6366f1;
+        --primary-dark: #4f46e5;
+        --secondary: #ec4899;
+        --accent: #06b6d4;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --danger: #ef4444;
+        --dark: #0f172a;
+        --gray-50: #f8fafc;
+        --gray-100: #f1f5f9;
+        --gray-200: #e2e8f0;
+        --gray-300: #cbd5e1;
+        --gray-400: #94a3b8;
+        --gray-500: #64748b;
+        --gray-600: #475569;
+        --gray-700: #334155;
+        --gray-800: #1e293b;
+        --gray-900: #0f172a;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-xl: 24px;
+        --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    }
+
+    /* Global Reset & Typography */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1400px;
+    }
+
+    h1 {
+        font-weight: 800 !important;
+        letter-spacing: -0.025em !important;
+        color: var(--gray-900) !important;
+        font-size: 2.25rem !important;
+    }
+
+    h2 {
+        font-weight: 700 !important;
+        letter-spacing: -0.025em !important;
+        color: var(--gray-800) !important;
+    }
+
+    h3 {
+        font-weight: 600 !important;
+        color: var(--gray-700) !important;
+    }
+
+    /* Modern Cards */
+    .modern-card {
+        background: white;
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
+        border: 1px solid var(--gray-100);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        height: 100%;
+    }
+
+    .modern-card:hover {
+        box-shadow: var(--shadow-xl);
+        transform: translateY(-4px);
+        border-color: var(--primary);
+    }
+
+    .modern-card-media {
+        position: relative;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        margin-bottom: 1rem;
+    }
+
+    .modern-card-media img {
+        width: 100%;
+        height: 220px;
+        object-fit: cover;
+        transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .modern-card:hover .modern-card-media img {
+        transform: scale(1.05);
+    }
+
+    /* Gradient Overlays */
+    .gradient-overlay {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(15, 23, 42, 0.8) 0%, rgba(15, 23, 42, 0) 50%);
+        pointer-events: none;
+    }
+
+    /* Modern Badges */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.875rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.025em;
+        text-transform: uppercase;
+    }
+
+    .badge-image {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+    }
+
+    .badge-video {
+        background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);
+        color: white;
+    }
+
+    .badge-duration {
+        background: rgba(15, 23, 42, 0.75);
+        color: white;
+        backdrop-filter: blur(8px);
+    }
+
+    /* Play Button Overlay */
+    .play-overlay {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 56px;
+        height: 56px;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--shadow-lg);
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+
+    .play-overlay:hover {
+        transform: translate(-50%, -50%) scale(1.1);
+        background: white;
+    }
+
+    .play-overlay::after {
+        content: '';
+        width: 0;
+        height: 0;
+        border-left: 18px solid var(--primary);
+        border-top: 11px solid transparent;
+        border-bottom: 11px solid transparent;
+        margin-left: 4px;
+    }
+
+    /* Stats Cards */
+    .stats-card {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        color: white;
+        box-shadow: var(--shadow-lg);
+    }
+
+    .stats-card h3 {
+        color: rgba(255, 255, 255, 0.9) !important;
+        font-size: 0.875rem !important;
+        font-weight: 500 !important;
+        margin-bottom: 0.5rem;
+    }
+
+    .stats-card .value {
+        font-size: 2.5rem;
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    /* Modern Buttons */
+    .btn-modern {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1.25rem;
+        border-radius: var(--radius-md);
+        font-weight: 600;
+        font-size: 0.875rem;
+        transition: all 0.2s ease;
+        border: none;
+        cursor: pointer;
+        width: 100%;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+        color: white;
+        box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.39);
+    }
+
+    .btn-primary:hover {
+        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.23);
+        transform: translateY(-1px);
+    }
+
+    /* Search Bar */
+    .search-container {
+        background: white;
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-md);
+        border: 1px solid var(--gray-200);
+        padding: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    /* Section Headers */
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 2px solid var(--gray-100);
+    }
+
+    .section-header-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--radius-md);
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+
+    /* Tags */
+    .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.25rem 0.75rem;
+        background: var(--gray-100);
+        color: var(--gray-600);
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+
+    .tag:hover {
+        background: var(--primary);
+        color: white;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: var(--gray-50);
+        border-radius: var(--radius-lg);
+        border: 2px dashed var(--gray-200);
+    }
+
+    .empty-state-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+
+    /* Rating Stars Modern */
+    .rating-modern {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        padding: 0.375rem 0.875rem;
+        border-radius: 9999px;
+        font-weight: 600;
+        color: #92400e;
+    }
+
+    /* Sidebar Modern */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button {
+        background: rgba(255, 255, 255, 0.05) !important;
+        color: #e2e8f0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: var(--radius-md) !important;
+        transition: all 0.2s ease !important;
+        font-weight: 500 !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: rgba(99, 102, 241, 0.2) !important;
+        border-color: rgba(99, 102, 241, 0.4) !important;
+        transform: translateX(4px);
+    }
+
+    /* Animations */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .animate-fade-in {
+        animation: fadeIn 0.5s ease-out forwards;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    .animate-pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    /* Grid Layout Improvements */
+    .media-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.5rem;
+    }
+
+    /* Comments Modern */
+    .comment-card {
+        background: white;
+        border-radius: var(--radius-md);
+        padding: 1rem;
+        border: 1px solid var(--gray-100);
+        box-shadow: var(--shadow-sm);
+        margin-bottom: 0.75rem;
+    }
+
+    .comment-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    /* Footer */
+    .modern-footer {
+        text-align: center;
+        padding: 2rem;
+        color: var(--gray-400);
+        font-size: 0.875rem;
+        border-top: 1px solid var(--gray-100);
+        margin-top: 3rem;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: var(--gray-100);
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--gray-300);
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--gray-400);
+    }
+</style>
+"""
+
 import streamlit as st
 from pathlib import Path
 from PIL import Image, ImageOps, ExifTags
@@ -2122,7 +2516,7 @@ class PhotoVideoAlbumApp:
         self.check_initialization()
     
     def setup_page_config(self):
-        """Configure Streamlit page settings"""
+        """Configure Streamlit page settings with modern styling"""
         st.set_page_config(
             page_title=Config.APP_NAME,
             page_icon="🎬📸",
@@ -2134,6 +2528,8 @@ class PhotoVideoAlbumApp:
                 'About': f"# {Config.APP_NAME} v{Config.VERSION}\nA comprehensive photo & video album management system"
             }
         )
+        # Inject modern CSS
+        st.markdown(MODERN_CSS, unsafe_allow_html=True)
     
     def check_initialization(self):
         """Check and initialize application directories"""
@@ -2383,7 +2779,7 @@ class PhotoVideoAlbumApp:
                 with st.container(border=True):
                     # Profile image or placeholder
                     if person.get('profile_image_data'):
-                        st.image(person['profile_image_data'], use_column_width=True)
+                        st.image(person['profile_image_data'], use_container_width=True)
                     else:
                         # Create colored placeholder
                         colors = ['#667eea', '#764ba2', '#f56565', '#48bb78', '#ed8936']
@@ -2825,14 +3221,14 @@ class PhotoVideoAlbumApp:
             if entry.get('media_type') == MediaType.IMAGE.value:
                 # Display image
                 if entry.get('media_data_url'):
-                    st.image(entry['media_data_url'], use_column_width=True)
+                    st.image(entry['media_data_url'], use_container_width=True)
                 else:
                     # Try to load from filepath
                     if entry.get('filepath'):
                         media_path = Config.DATA_DIR / entry['filepath']
                         if media_path.exists():
                             data_url = self.manager.media_processor.get_media_data_url(media_path)
-                            st.image(data_url, use_column_width=True)
+                            st.image(data_url, use_container_width=True)
                         else:
                             st.error("Image file not found")
                     else:
@@ -3073,7 +3469,7 @@ class PhotoVideoAlbumApp:
                         thumbnail_path = Path(image['thumbnail_path'])
                         if thumbnail_path.exists():
                             data_url = self.manager.media_processor.get_media_data_url(thumbnail_path)
-                            st.image(data_url, use_column_width=True)
+                            st.image(data_url, use_container_width=True)
                     
                     # Title
                     st.markdown(f"**{image.get('filename', 'Untitled')}**")
@@ -3795,12 +4191,15 @@ class PhotoVideoAlbumApp:
         else:
             self.render_dashboard()
         
-        # Footer
-        st.divider()
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.caption(f"© {datetime.datetime.now().year} {Config.APP_NAME} v{Config.VERSION}")
-            st.caption("A comprehensive photo & video album management system")
+        # Modern Footer
+        st.markdown(f"""
+        <div class="modern-footer">
+            <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🎬📸</div>
+            <p style="margin: 0; font-weight: 600; color: #64748b;">{Config.APP_NAME} v{Config.VERSION}</p>
+            <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem;">A modern photo & video album management system</p>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.75rem; color: #94a3b8;">© {datetime.datetime.now().year} All rights reserved</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ============================================================================
 # MAIN APPLICATION ENTRY POINT
